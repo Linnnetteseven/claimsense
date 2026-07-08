@@ -1,7 +1,7 @@
 // All API calls to the FastAPI backend go through this module.
 // BASE_URL can be overridden with VITE_API_BASE_URL in a .env file so the
 // frontend can point at a different backend port/host without a code change.
-const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8001";
+const BASE_URL = import.meta.env.VITE_API_BASE_URL || "https://claimsense-zeta.vercel.app";
 
 class ApiError extends Error {
   constructor(message, status) {
