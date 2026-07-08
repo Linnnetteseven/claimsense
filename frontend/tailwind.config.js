@@ -17,6 +17,12 @@ export default {
           bad: "#ef4444",
           "bad-bg": "#fef2f2",
         },
+        hakiki: {
+          blue: "#1565C0",
+          teal: "#00897B",
+          dark: "#263238",
+          light: "#F5F7FA"
+        },
       },
       keyframes: {
         "fade-in": {
