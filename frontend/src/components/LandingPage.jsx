@@ -27,23 +27,39 @@ export default function LandingPage({ claims, loading, onEnter }) {
     <div className="h-screen w-full bg-slate-50 text-slate-800 flex flex-col overflow-y-auto font-sans antialiased">
       <div className="flex-1 flex flex-col items-center justify-center px-6 py-12 gap-10 max-w-4xl mx-auto">
         
-        {/* Branding Wordmark */}
-        <div className="flex items-center gap-2.5">
-          <span className="text-teal-600 font-bold text-2xl tracking-tight">
-            ClaimSense
-          </span>
-          <span className="text-[10px] font-semibold bg-teal-50 text-teal-700 border border-teal-100 rounded-md px-2 py-0.5 shadow-sm">
-            SHA Pre-submission Validator
-          </span>
+        {/* Code-Based Brand Lockup */}
+        <div className="flex flex-col md:flex-row items-center gap-4 mb-2">
+          {/* Logo Mark & Name */}
+          <div className="flex items-center gap-3">
+            {/* Uses your existing H-icon favicon */}
+            <img src="/favicon.png" alt="Hakiki Health" className="h-12 w-12 object-contain" />
+            <div className="flex flex-col justify-center text-left">
+              <span className="text-3xl font-extrabold tracking-tight text-hakiki-dark flex items-center gap-2">
+                ClaimSense 
+                <span className="text-sm font-semibold bg-hakiki-light text-hakiki-teal px-2 py-0.5 rounded-full border border-teal-100 uppercase tracking-wider">
+                  by Hakiki
+                </span>
+              </span>
+            </div>
+          </div>
+          
+          {/* Vertical Divider (Hidden on mobile) */}
+          <div className="hidden md:block h-10 w-px bg-slate-300 mx-2"></div>
+          
+          {/* Subtitle */}
+          <div className="flex flex-col text-center md:text-left text-sm font-medium text-slate-500">
+            <span className="text-hakiki-dark font-bold">AI-Powered Claims</span>
+            <span>Pre-Submission Check</span>
+          </div>
         </div>
-
-        {/* Hero Copy */}
+	
+	{/* Hero Copy */}
         <div className="text-center space-y-3">
           <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-slate-850">
             AI-Powered Claims Pre-Submission Check
           </h1>
           <p className="text-slate-500 text-sm sm:text-base leading-relaxed max-w-2xl mx-auto">
-            ClaimSense audits patient claims against State Health Authority (SHA) policies and openIMIS constraints before ledger post. Get plain-English AI explanations of errors and fix data instantly.
+            ClaimSense audits patient claims against Social Health Authority (SHA) policies and openIMIS constraints before ledger post. Get plain-English AI explanations of errors and fix data instantly.
           </p>
         </div>
 
@@ -88,7 +104,7 @@ export default function LandingPage({ claims, loading, onEnter }) {
         <button
           type="button"
           onClick={onEnter}
-          className="bg-teal-600 hover:bg-teal-700 active:scale-95 transition-all text-white font-bold px-8 py-3.5 rounded-xl text-sm shadow-md"
+          className="bg-hakiki-blue hover:bg-blue-800 active:scale-95 transition-all text-white font-bold px-8 py-3.5 rounded-xl text-sm shadow-md"
         >
           Open Adjudication Dashboard →
         </button>
@@ -97,7 +113,7 @@ export default function LandingPage({ claims, loading, onEnter }) {
         <div className="grid grid-cols-1 sm:grid-cols-4 gap-5 w-full pt-4">
           {STEPS.map((step) => (
             <div key={step.n} className="bg-white border border-slate-100 p-4 rounded-xl shadow-sm text-left">
-              <span className="text-teal-600 text-xs font-mono font-bold block mb-1">{step.n}</span>
+              <span className="text-hakiki-teal text-xs font-mono font-bold block mb-1">{step.n}</span>
               <h4 className="text-xs font-bold text-slate-800 mb-1">{step.title}</h4>
               <p className="text-[11px] text-slate-500 leading-relaxed font-medium">{step.body}</p>
             </div>
