@@ -5,15 +5,14 @@ import LandingPage from "./components/LandingPage.jsx";
 import AddClaimModal from "./components/AddClaimModal.jsx";
 import { useClaims } from "./hooks/useClaims.js";
 
-const [selectedClaim, setSelectedClaim] = useState(null);
-const [counts, setCounts] = useState({ total: 0, ready: 0, review: 0, errors: 0 });
-
 /**
  * Root layout. Strict two-pane split-screen layout:
  *  - Left sidebar (ClaimList) — persistent, light-mode scrollable queue
  *  - Right workspace (ValidationPanel) — dynamic panel with patient info and validation tools
  */
 export default function App() {
+  const [selectedClaim, setSelectedClaim] = useState(null);
+  const [counts, setCounts] = useState({ total: 0, ready: 0, review: 0, errors: 0 });
   const { claims, loading, error, reload, patchPreview, addClaim } = useClaims();
   const [view, setView] = useState("landing"); // "landing" | "dashboard"
   const [selectedId, setSelectedId] = useState(null);
