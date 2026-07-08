@@ -3,57 +3,58 @@ import PropTypes from "prop-types";
 import { api } from "../api/client.js";
 import { LIST_BADGE_CLASSES, LIST_DOT_CLASSES } from "../constants/status.js";
 
+// Highlight matching text in search results
+const highlightMatch = (text, query) => {
+  if (!query || !text) return text;
+  const parts = text.split(new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi'));
+  return (
+    <>
+      {parts.map((part, i) =>
+        part.toLowerCase() === query.toLowerCase()
+          ? <span key={i} className="bg-teal-200 font-bold rounded-sm">{part}</span>
+          : part
+      )}
+    </>
+  );
+};
+
 export default function ClaimList({ selectedId, onSelect, onCountsChange }) {
   const [claims, setClaims] = useState([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [activeTab, setActiveTab] = useState("all");
 
-  const fetchClaims = useCallback(async () => {
+  // fetchClaims takes q and tab as params — NOT closed over in useCallback deps
+  // This keeps the reference stable so effects don't double-fire
+  const fetchClaims = useCallback(async (q, tab) => {
     setLoading(true);
     try {
-      // Fetching from the new backend endpoint we defined
-      const data = await api.getClaims({ q: query, status: activeTab });
-      setClaims(data.claims ?? []);
-
-      // If provided, update the counts in the header (e.g., total/ready/review counts)
+      const data = await api.getClaims({ q, status: tab });
+      const fetched = data.claims ?? [];
+      setClaims(fetched);
       if (onCountsChange) {
         onCountsChange({
           total: data.count,
-          ready: (data.claims ?? []).filter((c) => c._preview?.color === "green").length,
-          review: (data.claims ?? []).filter((c) => c._preview?.color === "amber").length,
-          errors: (data.claims ?? []).filter((c) => c._preview?.color === "red").length,
+          ready: fetched.filter((c) => c._preview?.color === "green").length,
+          review: fetched.filter((c) => c._preview?.color === "amber").length,
+          errors: fetched.filter((c) => c._preview?.color === "red").length,
         });
       }
     } catch (err) {
       console.error("Failed to fetch claims:", err);
+      setClaims([]);
     } finally {
       setLoading(false);
     }
-  }, [query, activeTab, onCountsChange]);
+  }, [onCountsChange]); // stable — only changes if parent passes a new onCountsChange
 
-  // Debounce search so we don't spam the API while typing
+  // Single effect handles both search (debounced) and tab changes
   useEffect(() => {
     const timer = setTimeout(() => {
-      fetchClaims();
+      fetchClaims(query, activeTab);
     }, 300);
     return () => clearTimeout(timer);
-  }, [query, fetchClaims]);
-
-  // Refetch when tab changes
-  useEffect(() => {
-    fetchClaims();
-  }, [activeTab, fetchClaims]);
-
-  if (loading) {
-    return (
-      <div className="space-y-3 p-4" aria-busy="true">
-        {[...Array(5)].map((_, i) => (
-          <div key={i} className="h-20 bg-slate-100 border border-slate-200/60 rounded-xl animate-pulse" />
-        ))}
-      </div>
-    );
-  }
+  }, [query, activeTab, fetchClaims]);
 
   return (
     <div className="flex flex-col h-full">
@@ -81,10 +82,16 @@ export default function ClaimList({ selectedId, onSelect, onCountsChange }) {
         </div>
       </div>
 
-      {/* The Original List Styling */}
-      <ul className="space-y-2 p-3 overflow-y-auto">
-        {claims.length === 0 ? (
-          <li className="p-8 text-slate-400 text-sm text-center font-medium">No claims found.</li>
+      {/* Claims List */}
+      <ul className="space-y-2 p-3 overflow-y-auto flex-1">
+        {loading ? (
+          [...Array(5)].map((_, i) => (
+            <li key={i} className="h-20 bg-slate-100 border border-slate-200/60 rounded-xl animate-pulse" />
+          ))
+        ) : claims.length === 0 ? (
+          <li className="p-8 text-slate-400 text-sm text-center font-medium">
+            {query ? `No claims matching "${query}"` : "No claims found."}
+          </li>
         ) : (
           claims.map((claim) => {
             const preview = claim._preview ?? {};
@@ -108,11 +115,15 @@ export default function ClaimList({ selectedId, onSelect, onCountsChange }) {
                     <span className={`mt-1.5 w-2 h-2 rounded-full flex-shrink-0 ${dotClass}`} />
                     <div className="flex-1 min-w-0">
                       <p className={`text-sm font-semibold truncate ${isSelected ? "text-teal-900" : "text-slate-800"}`}>
-                        {claim.patient_name || "Unknown Patient"}
+                        {highlightMatch(claim.patient_name || "Unknown Patient", query)}
                       </p>
-                      <p className="text-xs text-slate-500 font-medium truncate mt-0.5">{claim.facility_name}</p>
+                      <p className="text-xs text-slate-500 font-medium truncate mt-0.5">
+                        {highlightMatch(claim.facility_name || "", query)}
+                      </p>
                       <div className="flex items-center gap-1.5 mt-2">
-                        <span className="text-[10px] bg-slate-100 text-slate-600 font-semibold px-1.5 py-0.5 rounded">{claim.id}</span>
+                        <span className="text-[10px] bg-slate-100 text-slate-600 font-semibold px-1.5 py-0.5 rounded">
+                          {highlightMatch(claim.id || "", query)}
+                        </span>
                         <span className="text-[10px] text-slate-400 font-medium">{claim.visit_date}</span>
                       </div>
                     </div>
@@ -135,5 +146,5 @@ export default function ClaimList({ selectedId, onSelect, onCountsChange }) {
 ClaimList.propTypes = {
   selectedId: PropTypes.string,
   onSelect: PropTypes.func.isRequired,
-  onCountsChange: PropTypes.func, // Optional: for updating parent header counts
+  onCountsChange: PropTypes.func,
 };
