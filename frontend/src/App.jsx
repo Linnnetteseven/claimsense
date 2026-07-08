@@ -23,8 +23,7 @@ export default function App() {
     setSelectedId(claims[0].id);
   }
 
-  const selectedClaim = claims.find((c) => c.id === selectedId) ?? null;
-  const readyCount = claims.filter((c) => c._preview?.color === "green").length;
+   const readyCount = claims.filter((c) => c._preview?.color === "green").length;
 
   async function handleAddClaim(claimData) {
     const created = await addClaim(claimData);
