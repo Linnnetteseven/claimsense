@@ -5,13 +5,14 @@ import LandingPage from "./components/LandingPage.jsx";
 import AddClaimModal from "./components/AddClaimModal.jsx";
 import { useClaims } from "./hooks/useClaims.js";
 
-
 /**
  * Root layout. Strict two-pane split-screen layout:
  *  - Left sidebar (ClaimList) — persistent, light-mode scrollable queue
  *  - Right workspace (ValidationPanel) — dynamic panel with patient info and validation tools
  */
 export default function App() {
+  const [selectedClaim, setSelectedClaim] = useState(null);
+  const [counts, setCounts] = useState({ total: 0, ready: 0, review: 0, errors: 0 });
   const { claims, loading, error, reload, patchPreview, addClaim } = useClaims();
   const [view, setView] = useState("landing"); // "landing" | "dashboard"
   const [selectedId, setSelectedId] = useState(null);
@@ -22,8 +23,7 @@ export default function App() {
     setSelectedId(claims[0].id);
   }
 
-  const selectedClaim = claims.find((c) => c.id === selectedId) ?? null;
-  const readyCount = claims.filter((c) => c._preview?.color === "green").length;
+   const readyCount = claims.filter((c) => c._preview?.color === "green").length;
 
   async function handleAddClaim(claimData) {
     const created = await addClaim(claimData);
@@ -105,12 +105,14 @@ export default function App() {
 
         {/* Scrollable list of claims */}
         <div className="flex-1 overflow-y-auto">
-          <ClaimList
-            claims={claims}
-            selectedId={selectedId}
-            onSelect={setSelectedId}
-            loading={loading}
-          />
+     <ClaimList
+	selectedId={selectedId}
+	onSelect={(id, claim) => {
+	 setSelectedId(id);
+	 setSelectedClaim(claim);
+  }}
+  onCountsChange={setCounts}
+  />
         </div>
 
         {/* Footer info */}
