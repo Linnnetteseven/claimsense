@@ -5,6 +5,7 @@ import LandingPage from "./components/LandingPage.jsx";
 import AddClaimModal from "./components/AddClaimModal.jsx";
 import { useClaims } from "./hooks/useClaims.js";
 
+
 /**
  * Root layout. Strict two-pane split-screen layout:
  *  - Left sidebar (ClaimList) — persistent, light-mode scrollable queue
@@ -46,29 +47,33 @@ export default function App() {
       {/* Left sidebar: Persistent Queue */}
       <aside className="w-80 flex-shrink-0 bg-white border-r border-slate-200 flex flex-col">
         {/* Branding Header */}
-        <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+        <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between min-h-[72px]">
           <button
             type="button"
             onClick={() => setView("landing")}
-            className="flex items-center gap-2 hover:opacity-80 transition-opacity text-left"
+            className="flex items-center hover:opacity-80 transition-opacity text-left shrink-0"
           >
-            <span className="text-teal-600 font-bold text-xl tracking-tight">
-              ClaimSense
-            </span>
-            <span className="text-[10px] font-semibold bg-teal-50 text-teal-700 border border-teal-100 rounded-md px-1.5 py-0.5">
-              MVP
-            </span>
+            <div className="flex items-center gap-2.5">
+              <img src="/favicon.png" alt="Hakiki Logo" className="h-8 w-8 object-contain" />
+              <div className="flex flex-col text-left">
+                <span className="text-[1.35rem] font-extrabold tracking-tight text-hakiki-dark leading-none">
+                  ClaimSense
+                </span>
+                <span className="text-[9px] font-bold text-hakiki-teal uppercase tracking-widest mt-1">
+                  by Hakiki
+                </span>
+              </div>
+            </div>
           </button>
           <button
             type="button"
             onClick={() => setAddModalOpen(true)}
-            className="text-xs bg-teal-600 hover:bg-teal-700 active:scale-95 transition-all text-white font-semibold rounded-lg px-3 py-1.5 shadow-sm"
+            className="text-xs bg-hakiki-teal hover:bg-teal-700 active:scale-95 transition-all text-white font-semibold rounded-lg px-3 py-2 shadow-sm whitespace-nowrap ml-4"
           >
             + Add Claim
           </button>
         </div>
-
-        {/* Search & Stats Header */}
+       {/* Search & Stats Header */}
         <div className="px-5 py-3 bg-slate-50/50 border-b border-slate-100 flex items-center justify-between">
           <div>
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
