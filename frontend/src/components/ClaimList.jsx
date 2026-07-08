@@ -7,6 +7,13 @@ const DOT_STYLES = {
   red:   "bg-rose-500",
 };
 
+// Added score badge styles
+const SCORE_STYLES = {
+  green: "bg-emerald-50 text-emerald-700 border-emerald-100",
+  amber: "bg-amber-50 text-amber-700 border-amber-100",
+  red:   "bg-rose-50 text-rose-700 border-rose-100",
+};
+
 export default function ClaimList({ selectedId, onSelect, onCountsChange }) {
   const [claims, setClaims] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -19,9 +26,6 @@ export default function ClaimList({ selectedId, onSelect, onCountsChange }) {
   const fetchClaims = useCallback(async () => {
     setLoading(true);
     try {
-      // Debug: Check what we are sending to the API
-      console.log("ClaimList: Fetching with params:", { query, activeTab, page });
-      
       const data = await api.getClaims({
         q: query,
         status: activeTab,
@@ -29,7 +33,6 @@ export default function ClaimList({ selectedId, onSelect, onCountsChange }) {
         page_size: 20,
       });
       
-      console.log("ClaimList: API Response:", data);
       setClaims(data.claims ?? []);
       setTotal(data.count ?? 0);
       setTotalPages(data.total_pages ?? 1);
@@ -63,7 +66,6 @@ export default function ClaimList({ selectedId, onSelect, onCountsChange }) {
 
   return (
     <div className="flex flex-col h-full bg-white">
-      {/* Search Bar - Clean, Professional Styling */}
       <div className="px-4 py-3 border-b border-slate-100">
         <div className="relative">
           <input
@@ -76,7 +78,6 @@ export default function ClaimList({ selectedId, onSelect, onCountsChange }) {
         </div>
       </div>
 
-      {/* Tabs - Clearer visibility */}
       <div className="flex border-b border-slate-100">
         {["all", "ready", "review", "error"].map((tab) => (
           <button
@@ -93,10 +94,8 @@ export default function ClaimList({ selectedId, onSelect, onCountsChange }) {
         ))}
       </div>
 
-      {/* List */}
       <ul className="flex-1 overflow-y-auto divide-y divide-slate-50">
         {loading ? (
-          // Professional, Subtle Skeleton Loader
           [...Array(6)].map((_, i) => (
             <li key={i} className="px-5 py-4 animate-pulse">
               <div className="h-4 bg-slate-100 rounded w-3/4 mb-2"></div>
@@ -114,11 +113,19 @@ export default function ClaimList({ selectedId, onSelect, onCountsChange }) {
                   claim.id === selectedId ? "bg-teal-50 border-l-4 border-teal-600" : "border-l-4 border-transparent"
                 }`}
               >
-                <div className="flex items-center justify-between">
-                  <p className="text-sm font-bold text-slate-800">{claim.patient_name}</p>
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-bold text-slate-800 truncate">{claim.patient_name}</p>
+                  {/* Score Badge Rendered Here */}
+                  {claim._preview?.score !== undefined && (
+                    <span className={`flex-shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded border ${SCORE_STYLES[claim._preview.color]}`}>
+                      {claim._preview.score}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center justify-between mt-1">
+                  <p className="text-xs text-slate-500">{claim.id}</p>
                   <span className={`w-2 h-2 rounded-full ${DOT_STYLES[claim._preview?.color] ?? 'bg-slate-300'}`} />
                 </div>
-                <p className="text-xs text-slate-500 mt-0.5">{claim.id}</p>
               </button>
             </li>
           ))

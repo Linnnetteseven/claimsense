@@ -33,7 +33,10 @@ if (!claim) {
     submit,
     reset,
   } = useClaimValidation(claim, onValidationComplete);
-
+  useEffect(() => {
+  console.log("ValidationPanel - Current State:", state);
+  console.log("ValidationPanel - Validation Data:", validation);
+}, [state, validation]);
   const [activeTab, setActiveTab] = useState("AI Validation");
   
   // Document scan simulation state
