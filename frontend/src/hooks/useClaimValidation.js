@@ -125,11 +125,11 @@ export function useClaimValidation(claim, onValidationComplete) {
     setState("loading");
     setError(null);
     try {
-      const result = await api.correctClaim(claim.id, corrected);
-      setValidation(result.validation);
-      setEdits({});
-      setState("results");
-      onValidationComplete?.(claim.id, result.validation);
+	const result = await api.validateRaw(corrected);
+	setValidation(result);
+	setEdits({});
+	setState("results");
+	onValidationComplete?.(claim.id, result);
     } catch {
       // Backend offline simulation fallback
       setTimeout(() => {

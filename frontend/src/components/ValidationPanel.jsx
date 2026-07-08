@@ -545,7 +545,7 @@ export default function ValidationPanel({ claim, onValidationComplete }) {
             }`} />
             <div className="pl-3.5">
               <p className={`text-xs font-bold ${activeStep >= 1 ? "text-slate-800" : "text-slate-400"}`}>AI Initial Review</p>
-              <p className="text-[10px] text-slate-400 mt-0.5">FastAPI & Claude NLP</p>
+              <p className="text-[10px] text-slate-400 mt-0.5">FastAPI & Gemini AI</p>
             </div>
           </div>
 
@@ -574,7 +574,7 @@ export default function ValidationPanel({ claim, onValidationComplete }) {
 
         <div className="border-t border-slate-100 pt-4 text-[10px] text-slate-400">
           <span className="font-semibold block text-slate-500">Validation Mode:</span>
-          <span>FastAPI Rule Processor R4</span>
+          <span>FastAPI + Gemini Rule Processor</span>
         </div>
       </div>
     </div>
