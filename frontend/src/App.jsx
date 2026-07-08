@@ -5,6 +5,8 @@ import LandingPage from "./components/LandingPage.jsx";
 import AddClaimModal from "./components/AddClaimModal.jsx";
 import { useClaims } from "./hooks/useClaims.js";
 
+const [selectedClaim, setSelectedClaim] = useState(null);
+const [counts, setCounts] = useState({ total: 0, ready: 0, review: 0, errors: 0 });
 
 /**
  * Root layout. Strict two-pane split-screen layout:
@@ -105,12 +107,14 @@ export default function App() {
 
         {/* Scrollable list of claims */}
         <div className="flex-1 overflow-y-auto">
-          <ClaimList
-            claims={claims}
-            selectedId={selectedId}
-            onSelect={setSelectedId}
-            loading={loading}
-          />
+     <ClaimList
+	selectedId={selectedId}
+	onSelect={(id, claim) => {
+	 setSelectedId(id);
+	 setSelectedClaim(claim);
+  }}
+  onCountsChange={setCounts}
+  />
         </div>
 
         {/* Footer info */}
