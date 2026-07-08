@@ -1,12 +1,12 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import PropTypes from "prop-types";
 import { api } from "../api/client.js";
 import { LIST_BADGE_CLASSES, LIST_DOT_CLASSES } from "../constants/status.js";
 
-// Highlight matching text in search results
 const highlightMatch = (text, query) => {
   if (!query || !text) return text;
-  const parts = text.split(new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi'));
+  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const parts = text.split(new RegExp(`(${escaped})`, 'gi'));
   return (
     <>
       {parts.map((part, i) =>
@@ -19,22 +19,21 @@ const highlightMatch = (text, query) => {
 };
 
 export default function ClaimList({ selectedId, onSelect, onCountsChange }) {
-  const [claims, setClaims] = useState([]);
+  const [allClaims, setAllClaims] = useState([]);  // source of truth — never touched after fetch
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [activeTab, setActiveTab] = useState("all");
 
-  // fetchClaims takes q and tab as params — NOT closed over in useCallback deps
-  // This keeps the reference stable so effects don't double-fire
-  const fetchClaims = useCallback(async (q, tab) => {
+  // Fetch ONCE on mount
+  const fetchClaims = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await api.getClaims({ q, status: tab });
+      const data = await api.getClaims({ q: "", status: "all" });
       const fetched = data.claims ?? [];
-      setClaims(fetched);
+      setAllClaims(fetched);
       if (onCountsChange) {
         onCountsChange({
-          total: data.count,
+          total: fetched.length,
           ready: fetched.filter((c) => c._preview?.color === "green").length,
           review: fetched.filter((c) => c._preview?.color === "amber").length,
           errors: fetched.filter((c) => c._preview?.color === "red").length,
@@ -42,23 +41,55 @@ export default function ClaimList({ selectedId, onSelect, onCountsChange }) {
       }
     } catch (err) {
       console.error("Failed to fetch claims:", err);
-      setClaims([]);
+      setAllClaims([]);
     } finally {
       setLoading(false);
     }
-  }, [onCountsChange]); // stable — only changes if parent passes a new onCountsChange
+  }, [onCountsChange]);
 
-  // Single effect handles both search (debounced) and tab changes
   useEffect(() => {
-    const timer = setTimeout(() => {
-      fetchClaims(query, activeTab);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [query, activeTab, fetchClaims]);
+    fetchClaims();
+  }, [fetchClaims]);
+
+  // Filter in memory — no API call, instant
+  const filteredClaims = useMemo(() => {
+    let result = allClaims;
+
+    // Tab filter
+    if (activeTab === "ready") {
+      result = result.filter((c) => c._preview?.color === "green");
+    } else if (activeTab === "review") {
+      result = result.filter((c) => c._preview?.color === "amber");
+    } else if (activeTab === "error") {
+      result = result.filter((c) => c._preview?.color === "red");
+    }
+
+    // Search filter
+    if (query.trim()) {
+      const q = query.trim().toLowerCase();
+      result = result.filter(
+        (c) =>
+          c.patient_name?.toLowerCase().includes(q) ||
+          c.id?.toLowerCase().includes(q) ||
+          c.facility_name?.toLowerCase().includes(q)
+      );
+    }
+
+    return result;
+  }, [allClaims, query, activeTab]);
+
+  if (loading) {
+    return (
+      <div className="space-y-3 p-4" aria-busy="true">
+        {[...Array(5)].map((_, i) => (
+          <div key={i} className="h-20 bg-slate-100 border border-slate-200/60 rounded-xl animate-pulse" />
+        ))}
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full">
-      {/* Search and Triage Interface */}
       <div className="p-3 space-y-2">
         <input
           type="text"
@@ -73,7 +104,9 @@ export default function ClaimList({ selectedId, onSelect, onCountsChange }) {
               key={tab}
               onClick={() => setActiveTab(tab)}
               className={`flex-1 py-1.5 text-[10px] font-bold uppercase rounded-md transition-all ${
-                activeTab === tab ? "bg-white shadow-sm text-slate-800" : "text-slate-500 hover:text-slate-700"
+                activeTab === tab
+                  ? "bg-white shadow-sm text-slate-800"
+                  : "text-slate-500 hover:text-slate-700"
               }`}
             >
               {tab}
@@ -82,18 +115,13 @@ export default function ClaimList({ selectedId, onSelect, onCountsChange }) {
         </div>
       </div>
 
-      {/* Claims List */}
       <ul className="space-y-2 p-3 overflow-y-auto flex-1">
-        {loading ? (
-          [...Array(5)].map((_, i) => (
-            <li key={i} className="h-20 bg-slate-100 border border-slate-200/60 rounded-xl animate-pulse" />
-          ))
-        ) : claims.length === 0 ? (
+        {filteredClaims.length === 0 ? (
           <li className="p-8 text-slate-400 text-sm text-center font-medium">
             {query ? `No claims matching "${query}"` : "No claims found."}
           </li>
         ) : (
-          claims.map((claim) => {
+          filteredClaims.map((claim) => {
             const preview = claim._preview ?? {};
             const isSelected = claim.id === selectedId;
             const dotColor = preview.color ?? "red";
