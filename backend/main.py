@@ -12,6 +12,9 @@ Routes:
 """
 
 import logging
+from fastapi import Form, BackgroundTasks
+from fastapi.responses import PlainTextResponse
+from ussd.handler import handle_ussd_session
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
@@ -275,3 +278,41 @@ async def submit_claim(claim_id: str):
     except Exception as exc:
         logger.error("openIMIS submission failed: %s", exc)
         raise HTTPException(status_code=502, detail=f"openIMIS rejected the submission: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# Africa's Talking USSD + SMS Routes
+# ---------------------------------------------------------------------------
+
+@app.post("/ussd", response_class=PlainTextResponse)
+async def ussd_callback(
+    background_tasks: BackgroundTasks,
+    sessionId: str = Form(...),
+    phoneNumber: str = Form(...),
+    networkCode: str = Form(default=""),
+    serviceCode: str = Form(default=""),
+    text: str = Form(default=""),
+):
+    """
+    Africa's Talking USSD callback.
+
+    AT sends application/x-www-form-urlencoded POST on every user input.
+    We respond with plain text: 'CON <msg>' to continue or 'END <msg>' to close.
+    Registered as callback URL in the AT dashboard under USSD settings.
+    """
+    logger.info(
+        "USSD | session=%s phone=%s text=%r",
+        sessionId,
+        phoneNumber,
+        text,
+    )
+
+    response = handle_ussd_session(
+        session_id=sessionId,
+        phone_number=phoneNumber,
+        text=text,
+        background_tasks=background_tasks,
+    )
+
+    logger.info("USSD response: %r", response[:60])
+    return response
