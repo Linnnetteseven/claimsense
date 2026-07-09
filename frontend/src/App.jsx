@@ -5,25 +5,20 @@ import LandingPage from "./components/LandingPage.jsx";
 import AddClaimModal from "./components/AddClaimModal.jsx";
 import { useClaims } from "./hooks/useClaims.js";
 
-/**
- * Root layout. Strict two-pane split-screen layout:
- *  - Left sidebar (ClaimList) — persistent, light-mode scrollable queue
- *  - Right workspace (ValidationPanel) — dynamic panel with patient info and validation tools
- */
 export default function App() {
   const [selectedClaim, setSelectedClaim] = useState(null);
   const [counts, setCounts] = useState({ total: 0, ready: 0, review: 0, errors: 0 });
+
   const { claims, loading, error, reload, patchPreview, addClaim } = useClaims();
-  const [view, setView] = useState("landing"); // "landing" | "dashboard"
+  const [view, setView] = useState("landing");
   const [selectedId, setSelectedId] = useState(null);
   const [addModalOpen, setAddModalOpen] = useState(false);
 
-  // Auto-select the first claim once the list loads, for a quicker demo start.
   if (!selectedId && claims.length > 0) {
     setSelectedId(claims[0].id);
   }
 
-   const readyCount = claims.filter((c) => c._preview?.color === "green").length;
+  const readyCount = claims.filter((c) => c._preview?.color === "green").length;
 
   async function handleAddClaim(claimData) {
     const created = await addClaim(claimData);
@@ -46,7 +41,7 @@ export default function App() {
     <div className="flex h-screen bg-slate-50 overflow-hidden font-sans text-slate-800 antialiased">
       {/* Left sidebar: Persistent Queue */}
       <aside className="w-80 flex-shrink-0 bg-white border-r border-slate-200 flex flex-col">
-        {/* Branding Header */}
+        {/* Branding Header - Updated to Hakiki Reference Style */}
         <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between min-h-[72px]">
           <button
             type="button"
@@ -56,11 +51,9 @@ export default function App() {
             <div className="flex items-center gap-2.5">
               <img src="/favicon.png" alt="Hakiki Logo" className="h-8 w-8 object-contain" />
               <div className="flex flex-col text-left">
-                <span className="text-[1.35rem] font-extrabold tracking-tight text-hakiki-dark leading-none">
-                  ClaimSense
-                </span>
-                <span className="text-[9px] font-bold text-hakiki-teal uppercase tracking-widest mt-1">
-                  by Hakiki
+                {/* The new styled Hakiki logo text */}
+                <span className="text-3xl font-black tracking-tighter text-[#0A4D3C] lowercase leading-none mt-1">
+                  hakiki
                 </span>
               </div>
             </div>
@@ -68,12 +61,13 @@ export default function App() {
           <button
             type="button"
             onClick={() => setAddModalOpen(true)}
-            className="text-xs bg-hakiki-teal hover:bg-teal-700 active:scale-95 transition-all text-white font-semibold rounded-lg px-3 py-2 shadow-sm whitespace-nowrap ml-4"
+            className="text-xs bg-[#00897B] hover:bg-teal-700 active:scale-95 transition-all text-white font-semibold rounded-lg px-3 py-2 shadow-sm whitespace-nowrap ml-4"
           >
             + Add Claim
           </button>
         </div>
-       {/* Search & Stats Header */}
+
+        {/* Search & Stats Header */}
         <div className="px-5 py-3 bg-slate-50/50 border-b border-slate-100 flex items-center justify-between">
           <div>
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
@@ -81,7 +75,7 @@ export default function App() {
             </p>
             {!loading && (
               <p className="text-xs text-slate-500 font-medium">
-                {claims.length} total • {readyCount} ready
+                {counts.total || claims.length} total • {counts.ready || readyCount} ready
               </p>
             )}
           </div>
@@ -95,24 +89,21 @@ export default function App() {
         </div>
 
         {error && (
-          <div
-            role="alert"
-            className="mx-4 my-2 text-xs text-red-700 bg-red-50 border border-red-100 rounded-lg p-3"
-          >
+          <div role="alert" className="mx-4 my-2 text-xs text-red-700 bg-red-50 border border-red-100 rounded-lg p-3">
             Failed to load: {error}
           </div>
         )}
 
         {/* Scrollable list of claims */}
         <div className="flex-1 overflow-y-auto">
-     <ClaimList
-	selectedId={selectedId}
-	onSelect={(id, claim) => {
-	 setSelectedId(id);
-	 setSelectedClaim(claim);
-  }}
-  onCountsChange={setCounts}
-  />
+          <ClaimList
+            selectedId={selectedId}
+            onSelect={(id, claim) => {
+              setSelectedId(id);
+              setSelectedClaim(claim);
+            }}
+            onCountsChange={setCounts}
+          />
         </div>
 
         {/* Footer info */}
@@ -137,4 +128,3 @@ export default function App() {
     </div>
   );
 }
-
