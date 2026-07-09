@@ -71,7 +71,7 @@ def send_claim_report_sms(phone_number: str, claim: dict, result: dict) -> None:
 
     body = _build_sms_body(claim, result)
     try:
-        response = sms.send(body, [phone_number], sender_id="Hakiki")
+        response = sms.send(body, [phone_number])
         logger.info("SMS sent to %s: %s", phone_number, response)
     except Exception as exc:
         logger.error("SMS send failed for %s: %s", phone_number, exc)
