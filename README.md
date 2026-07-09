@@ -1,45 +1,92 @@
-# 🩺 ClaimSense
+# 🩺 Hakiki
+"Grammarly for hospital claims."
 
-**"Grammarly for hospital claims."**
+## *An AI-Powered Claims Intelligence Platform for Healthcare Financing*
 
-ClaimSense is an AI-assisted, pre-submission validation module built for openIMIS. It intercepts SHA (Social Health Authority) claim data at the draft stage — flagging errors, checking eligibility rules, and scoring a claim's readiness — *before* it's ever formally submitted.
 
-> The name says what it does: *sense-check* a claim before it goes anywhere near SHA — catching what a tired clerk might miss at 4pm on a Friday.
+> **"Helping healthcare providers submit better claims before they become reimbursement delays."**
 
-By shifting claims handling from **reactive to proactive**, ClaimSense cuts rejection rates, reduces administrative backlog, and protects revenue for healthcare facilities.
+Hakiki is an AI-powered Claims Intelligence Platform that integrates with existing **Hospital Information Systems (HIS)** and healthcare financing platforms such as **openIMIS** to improve the quality of healthcare claims before submission.
+
+Rather than replacing existing hospital systems, Hakiki acts as an intelligent decision-support layer between claim preparation and claim submission. It validates draft claims against healthcare financing rules, identifies inconsistencies, explains issues in plain language, and provides actionable recommendations that help claims officers submit complete, compliant, and high-quality claims.
+
+The name **Hakiki**, meaning **"verify"** or **"confirm"** in Swahili, reflects our mission: ensuring that every claim is as accurate, complete, and reimbursement-ready as possible before entering the payer review process.
 
 ---
 
-## 🚀 The Problem & The Solution
+# 🌍 Why Hakiki?
 
-### Claim Rejection Is Only One Symptom of a Larger Challenge
+Healthcare financing is one of the most critical components of modern healthcare systems. Hospitals rely on timely reimbursement to sustain clinical services, procure supplies, maintain infrastructure, and continue delivering quality patient care. Yet the healthcare claims lifecycle remains highly administrative, requiring extensive verification and multiple levels of review before reimbursement can be approved.
 
-It's tempting to treat claim rejection as the problem to solve. It isn't — it's the visible symptom of deeper, systemic weaknesses in how claims move through the health financing system. Hospital billing teams and SHA-accredited facilities are contending with:
+Through discussions with claims officers at **Kerugoya Level 5 Hospital**, our team observed that a healthcare claim is far more than filling out a form and clicking **Submit**. Every claim progresses through multiple stages of review—including **Manual Review**, **Medical Review**, and **Payer Review**—before reimbursement.
 
-- **Lengthy claims adjudication workflows** — claims pass through multiple manual checkpoints before a decision is reached, each one adding latency
-- **Manual verification processes** — eligibility, coverage, and coding checks are still largely done by hand, at clerk-level throughput
-- **Poor documentation quality** — errors introduced at the point of entry become expensive to trace once a claim is deep in the pipeline
-- **Lack of intelligent decision support for claims officers** — staff work claim-by-claim with nothing flagging risk before submission
-- **Reimbursement delays affecting hospital cash flow** — every rejected or returned claim extends the revenue cycle for a facility already operating on thin margins
-- **Weak provider feedback loops that prevent continuous improvement** — facilities rarely get structured insight into *why* claims are rejected or delayed, so the same errors resurface month after month
-- **High administrative workload** — staff time is consumed re-working claims that could have been caught in seconds at the point of entry
+Initially, we believed that claim rejection was the primary challenge. However, conversations with healthcare financing professionals and further research revealed that rejection is only one symptom of a broader operational problem.
 
-Fix these upstream issues and the rejection rate takes care of itself. Chase the rejection rate alone, and the underlying workflow problems stay exactly where they were.
+Healthcare facilities face:
 
-### The ClaimSense Shift
+- ⏳ Lengthy claims adjudication workflows
+- 🔍 Extensive manual verification
+- 📄 Inconsistent documentation quality
+- 💰 Reimbursement delays affecting operational cash flow
+- 🧾 High administrative workload for claims teams
+- 📊 Limited feedback mechanisms that help facilities improve future claims
 
-ClaimSense operates as a **pre-submission intelligence layer within the openIMIS workflow** — not a replacement for openIMIS, and not a system that makes decisions on anyone's behalf. It plugs into the existing claims process at the point where a claims officer is preparing a claim, reviews it the moment it's drafted, and returns immediate, actionable feedback. The claims officer reviews, corrects, and decides — ClaimSense assists that judgment, it never substitutes for it.
+These challenges increase operational costs, consume valuable staff time, delay reimbursements, and ultimately reduce the efficiency of healthcare financing systems.
 
-- **Catch errors early** — missing fields, bad codes, expired coverage, mismatched totals
-- **Score every claim** — a transparent 0–100 readiness score, no black box
-- **Explain in plain English** — Claude translates technical rule failures into instructions a claims clerk can act on
-- **Zero disruption** — works entirely against draft/mock data until a claim is ready, then hands off a proper FHIR payload to openIMIS
+Hakiki was built to address these challenges **before they occur**.
+
+---
+
+# 💡 Our Solution
+
+Hakiki introduces an intelligent **pre-submission validation layer** that supports healthcare workers during claim preparation.
+
+Instead of discovering issues after a claim has entered the reimbursement workflow, Hakiki helps identify and resolve them **before submission**.
+
+The platform combines **deterministic healthcare validation rules** with **Large Language Models (LLMs)** to provide explainable, human-centered decision support.
+
+Hakiki enables healthcare providers to:
+
+- ✅ Validate healthcare claims against predefined financing and compliance rules.
+- 🔎 Detect missing or inconsistent information before submission.
+- 💬 Explain validation findings in clear, non-technical language.
+- 🛠️ Recommend practical corrective actions for claims officers.
+- 📈 Generate a transparent **Claim Readiness Score** that reflects overall submission quality.
+- 📊 Produce operational insights that help healthcare facilities continuously improve claim quality over time.
+
+Importantly, Hakiki **does not replace healthcare professionals or existing health information systems.**
+
+It augments them.
+
+Final decisions always remain with the claims officer.
+
+---
+
+# 🎯 Our Vision
+
+Our long-term vision is to make Hakiki the intelligence layer connecting **clinical operations** with **healthcare financing**.
+
+Starting with intelligent claims validation, Hakiki is designed to evolve into a proactive assistant capable of supporting healthcare providers throughout the entire claims lifecycle by improving documentation quality, reducing administrative burden, identifying recurring workflow challenges, and providing continuous operational insights.
+
+Built with **interoperability** in mind, Hakiki is designed to integrate with **Hospital Information Systems (HIS)** and healthcare financing platforms through secure APIs and healthcare interoperability standards such as **FHIR (Fast Healthcare Interoperability Resources)**, enabling adoption across diverse healthcare environments.
+
+As healthcare systems continue to digitize, Hakiki aims to become a trusted AI companion that helps hospitals submit higher-quality claims, accelerate reimbursement, and strengthen healthcare financing across Kenya and beyond.
+
+---
+
+# 🤝 Our Philosophy
+
+Healthcare professionals should spend their time delivering care—not navigating avoidable administrative complexity.
+
+We believe Artificial Intelligence should **enhance human expertise, not replace it**.
+
+Hakiki exists to make healthcare financing more accurate, transparent, efficient, and sustainable by empowering the healthcare professionals responsible for it.
 
 ---
 
 ## 🛠️ Architecture & System Flow
 
-ClaimSense is a **rule-based engine**, not a black-box classifier. Every score is traceable to a specific, named rule — auditable by design, and with no confusion matrix to defend to a room full of clinicians.
+Hakiki here is a **rule-based engine**, not a black-box classifier. Every score is traceable to a specific, named rule — auditable by design, and with no confusion matrix to defend to a room full of clinicians.
 
 ```
 [ React Dashboard ]
