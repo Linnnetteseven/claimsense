@@ -84,19 +84,19 @@ export default function AddClaimModal({ onClose, onSubmit }) {
       role="dialog"
       aria-modal="true"
       aria-labelledby="add-claim-title"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm px-4 py-8"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 dark:bg-slate-950/70 backdrop-blur-sm px-4 py-8"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
-      <div className="bg-white rounded-2xl w-full max-w-2xl max-h-full overflow-y-auto shadow-xl animate-fade-in">
-        <div className="sticky top-0 bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between z-10">
-          <h2 id="add-claim-title" className="text-lg font-semibold text-slate-900">
+      <div className="bg-white dark:bg-slate-950 border dark:border-slate-800 rounded-2xl w-full max-w-2xl max-h-full overflow-y-auto shadow-xl animate-fade-in text-slate-800 dark:text-slate-100">
+        <div className="sticky top-0 bg-white dark:bg-slate-950 border-b border-slate-200 dark:border-slate-850 px-6 py-4 flex items-center justify-between z-10">
+          <h2 id="add-claim-title" className="text-lg font-semibold text-slate-900 dark:text-slate-100">
             Add a new claim
           </h2>
           <button
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="text-slate-400 hover:text-slate-600 text-xl leading-none px-2"
+            className="text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-350 text-xl leading-none px-2"
           >
             ×
           </button>
@@ -106,7 +106,7 @@ export default function AddClaimModal({ onClose, onSubmit }) {
           {error && (
             <div
               role="alert"
-              className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700"
+              className="rounded-lg bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-900/40 px-4 py-3 text-sm text-red-700 dark:text-red-400"
             >
               {error}
             </div>
@@ -114,7 +114,7 @@ export default function AddClaimModal({ onClose, onSubmit }) {
 
           {/* Patient */}
           <fieldset className="space-y-3">
-            <legend className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-1">
+            <legend className="text-xs font-semibold text-slate-500 dark:text-slate-450 uppercase tracking-widest mb-1">
               Patient
             </legend>
             <div className="grid grid-cols-2 gap-3">
@@ -159,7 +159,7 @@ export default function AddClaimModal({ onClose, onSubmit }) {
 
           {/* Visit */}
           <fieldset className="space-y-3">
-            <legend className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-1">
+            <legend className="text-xs font-semibold text-slate-500 dark:text-slate-450 uppercase tracking-widest mb-1">
               Visit
             </legend>
             <div className="grid grid-cols-2 gap-3">
@@ -212,7 +212,7 @@ export default function AddClaimModal({ onClose, onSubmit }) {
 
           {/* Coverage */}
           <fieldset className="space-y-3">
-            <legend className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-1">
+            <legend className="text-xs font-semibold text-slate-500 dark:text-slate-450 uppercase tracking-widest mb-1">
               Coverage
             </legend>
             <div className="grid grid-cols-2 gap-3">
@@ -245,7 +245,7 @@ export default function AddClaimModal({ onClose, onSubmit }) {
           {/* Items */}
           <fieldset className="space-y-3">
             <div className="flex items-center justify-between">
-              <legend className="text-xs font-semibold text-slate-500 uppercase tracking-widest">
+              <legend className="text-xs font-semibold text-slate-500 dark:text-slate-450 uppercase tracking-widest">
                 Service items
               </legend>
               <button
@@ -299,13 +299,11 @@ export default function AddClaimModal({ onClose, onSubmit }) {
                 </div>
               ))}
             </div>
-          </fieldset>
-
-          {/* Claimed amount */}
-          <div className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-4 py-3">
+          </fieldset>          {/* Claimed amount */}
+          <div className="flex items-center justify-between bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-4 py-3">
             <div>
-              <p className="text-xs text-slate-500">Items total</p>
-              <p className="text-sm font-semibold text-slate-800">
+              <p className="text-xs text-slate-500 dark:text-slate-400">Items total</p>
+              <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">
                 KES {itemsTotal.toLocaleString()}
               </p>
             </div>
@@ -332,7 +330,7 @@ export default function AddClaimModal({ onClose, onSubmit }) {
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2.5 border border-slate-300 rounded-lg text-sm text-slate-600 hover:bg-slate-50 active:scale-95 transition-all"
+              className="px-4 py-2.5 border border-slate-300 dark:border-slate-800 rounded-lg text-sm text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-900 active:scale-95 transition-all"
             >
               Cancel
             </button>
@@ -346,7 +344,7 @@ export default function AddClaimModal({ onClose, onSubmit }) {
 function Field({ label, required, className = "", children }) {
   return (
     <label className={`block ${className}`}>
-      <span className="block text-xs font-medium text-slate-500 mb-1">
+      <span className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
         {label}
         {required && <span className="text-red-500"> *</span>}
       </span>
