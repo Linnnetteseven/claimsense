@@ -1,0 +1,41 @@
+name: Hakiki Uptime Check
+
+# Put this file at .github/workflows/uptime-check.yml in your repo.
+# Set these repo secrets first (Settings > Secrets and variables > Actions):
+#   TARGET_URL, GROQ_API_KEY, DISCORD_WEBHOOK_URL
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"   # every 10 minutes
+  workflow_dispatch:          # lets you trigger it manually to test
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Persists last known status between runs so we only alert on CHANGE,
+      # not on every single failed check.
+      - name: Restore last known state
+        uses: actions/cache@v4
+        with:
+          path: uptime_state.json
+          key: uptime-state-${{ github.run_id }}
+          restore-keys: |
+            uptime-state-
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run check
+        env:
+          TARGET_URL: ${{ secrets.TARGET_URL }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python monitor.py
