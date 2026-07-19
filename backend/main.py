@@ -85,7 +85,9 @@ def full_pipeline(claim: dict) -> dict:
     Returns everything the frontend needs in one response.
     """
     result = validate(claim)
-    result["explanations"] = explain_errors(result["errors"], claim)
+    explanations, ai_used = explain_errors(result["errors"], claim)
+    result["explanations"] = explanations
+    result["ai_explanations_used"] = ai_used
     result["fhir_claim_response"] = build_claim_response(claim, result)
     return result
 

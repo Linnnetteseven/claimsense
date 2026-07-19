@@ -1,6 +1,5 @@
 """
-Generates plain-English error explanations using Google Gemini 3.5 Flash.
-Uses google-genai SDK as per official docs: https://ai.google.dev/gemini-api/docs
+Generates plain-English error explanations using Google Gemini 2.0 Flash.
 
 Falls back to built-in rule suggestion text if:
   - GEMINI_API_KEY is not set in .env
@@ -15,21 +14,39 @@ from config import config
 
 logger = logging.getLogger(__name__)
 
-# Initialize once at import time
-_client = genai.Client(api_key=config.GEMINI_API_KEY) if config.GEMINI_API_KEY else None
+# Lazy init — not at import time, avoids cold-start env var timing issues
+_client = None
 
 
-def explain_errors(errors: list[dict], claim: dict) -> dict[str, str]:
+def _get_client():
+    """Initialize Gemini client on first call, not at module import."""
+    global _client
+    if _client is None:
+        if not config.GEMINI_API_KEY:
+            logger.warning("GEMINI_API_KEY not set — Gemini disabled, using fallback")
+            return None
+        try:
+            _client = genai.Client(api_key=config.GEMINI_API_KEY)
+            logger.info("Gemini client initialized OK")
+        except Exception as exc:
+            logger.error("Failed to initialize Gemini client: %s", exc)
+            return None
+    return _client
+
+
+def explain_errors(errors: list[dict], claim: dict) -> tuple[dict[str, str], bool]:
     """
-    Returns a dict mapping rule_id to plain-English explanation.
-    Falls back to built-in suggestion text if Gemini is unavailable.
+    Returns (explanations_dict, ai_was_used).
+    explanations_dict maps rule_id -> plain-English explanation.
+    ai_was_used = True if Gemini responded, False if using fallback.
     """
     if not errors:
-        return {}
+        return {}, False
 
-    if not _client:
-        logger.info("Gemini disabled — GEMINI_API_KEY not set, using fallback")
-        return {e["rule_id"]: e["suggestion"] for e in errors}
+    client = _get_client()
+
+    if not client:
+        return {e["rule_id"]: e["suggestion"] for e in errors}, False
 
     error_lines = "\n".join(
         f'rule_id="{e["rule_id"]}" | issue="{e["message"]}" | hint="{e["suggestion"]}"'
@@ -64,31 +81,30 @@ Example:
 }}"""
 
     try:
-        response = _client.models.generate_content(
+        response = client.models.generate_content(
             model="gemini-2.0-flash",
             contents=prompt,
         )
 
         raw = response.text.strip()
 
-        # Strip markdown fences if present
         if raw.startswith("```"):
             parts = raw.split("```")
             raw = parts[1].lstrip("json").strip() if len(parts) >= 2 else raw
 
         parsed = json.loads(raw)
 
-        # Fill any missing keys with fallback
         for e in errors:
             if e["rule_id"] not in parsed:
                 parsed[e["rule_id"]] = e["suggestion"]
 
-        return parsed
+        logger.info("Gemini explained %d error(s) successfully", len(errors))
+        return parsed, True
 
     except json.JSONDecodeError as exc:
         logger.warning("Gemini response not valid JSON (%s) — using fallback", exc)
-        return {e["rule_id"]: e["suggestion"] for e in errors}
+        return {e["rule_id"]: e["suggestion"] for e in errors}, False
 
     except Exception as exc:
         logger.error("Gemini API call failed: %s", exc)
-        return {e["rule_id"]: e["suggestion"] for e in errors}
+        return {e["rule_id"]: e["suggestion"] for e in errors}, False
