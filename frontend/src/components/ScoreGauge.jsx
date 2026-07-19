@@ -22,7 +22,7 @@ export default function ScoreGauge({ score }) {
         aria-label={`Validation score: ${score} out of 100, ${scoreToLabel(score)}`}
       >
         {/* Gray background track */}
-        <circle cx="60" cy="60" r={RADIUS} fill="none" stroke="#e2e8f0" strokeWidth="10" />
+        <circle cx="60" cy="60" r={RADIUS} fill="none" strokeWidth="10" className="stroke-slate-200 dark:stroke-slate-850" />
         {/* Colored score arc — starts from the top (rotated -90°) */}
         <circle
           cx="60"

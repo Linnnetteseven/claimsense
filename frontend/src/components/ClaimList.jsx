@@ -82,7 +82,7 @@ export default function ClaimList({ selectedId, onSelect, onCountsChange }) {
     return (
       <div className="space-y-3 p-4" aria-busy="true">
         {[...Array(5)].map((_, i) => (
-          <div key={i} className="h-20 bg-slate-100 border border-slate-200/60 rounded-xl animate-pulse" />
+          <div key={i} className="h-20 bg-slate-100 dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800 rounded-xl animate-pulse" />
         ))}
       </div>
     );
@@ -96,17 +96,17 @@ export default function ClaimList({ selectedId, onSelect, onCountsChange }) {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search patient or ID..."
-          className="w-full text-sm p-2.5 border border-slate-200 rounded-xl shadow-sm focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 outline-none"
+          className="w-full text-sm p-2.5 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 outline-none"
         />
-        <div className="flex bg-slate-100 p-1 rounded-lg">
+        <div className="flex bg-slate-100 dark:bg-slate-900/60 p-1 rounded-lg border dark:border-slate-800">
           {["all", "ready", "review", "error"].map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
               className={`flex-1 py-1.5 text-[10px] font-bold uppercase rounded-md transition-all ${
                 activeTab === tab
-                  ? "bg-white shadow-sm text-slate-800"
-                  : "text-slate-500 hover:text-slate-700"
+                  ? "bg-white dark:bg-slate-800 shadow-sm text-slate-800 dark:text-slate-100"
+                  : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300"
               }`}
             >
               {tab}
@@ -117,7 +117,7 @@ export default function ClaimList({ selectedId, onSelect, onCountsChange }) {
 
       <ul className="space-y-2 p-3 overflow-y-auto flex-1">
         {filteredClaims.length === 0 ? (
-          <li className="p-8 text-slate-400 text-sm text-center font-medium">
+          <li className="p-8 text-slate-400 dark:text-slate-500 text-sm text-center font-medium">
             {query ? `No claims matching "${query}"` : "No claims found."}
           </li>
         ) : (
@@ -135,24 +135,24 @@ export default function ClaimList({ selectedId, onSelect, onCountsChange }) {
                   onClick={() => onSelect(claim.id, claim)}
                   className={`w-full text-left p-3.5 rounded-xl border transition-all duration-200 block shadow-sm ${
                     isSelected
-                      ? "bg-teal-50/50 border-teal-500 ring-1 ring-teal-500/50"
-                      : "bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50/50 active:bg-slate-50"
+                      ? "bg-teal-50/50 dark:bg-teal-950/25 border-teal-500 ring-1 ring-teal-500/50"
+                      : "bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-850 hover:border-slate-300 dark:hover:border-slate-800 hover:bg-slate-50/50 dark:hover:bg-slate-900/50 active:bg-slate-50 dark:active:bg-slate-900"
                   }`}
                 >
                   <div className="flex items-start gap-3">
                     <span className={`mt-1.5 w-2 h-2 rounded-full flex-shrink-0 ${dotClass}`} />
                     <div className="flex-1 min-w-0">
-                      <p className={`text-sm font-semibold truncate ${isSelected ? "text-teal-900" : "text-slate-800"}`}>
+                      <p className={`text-sm font-semibold truncate ${isSelected ? "text-teal-900 dark:text-teal-350" : "text-slate-800 dark:text-slate-200"}`}>
                         {highlightMatch(claim.patient_name || "Unknown Patient", query)}
                       </p>
-                      <p className="text-xs text-slate-500 font-medium truncate mt-0.5">
+                      <p className="text-xs text-slate-500 dark:text-slate-400 font-medium truncate mt-0.5">
                         {highlightMatch(claim.facility_name || "", query)}
                       </p>
                       <div className="flex items-center gap-1.5 mt-2">
-                        <span className="text-[10px] bg-slate-100 text-slate-600 font-semibold px-1.5 py-0.5 rounded">
+                        <span className="text-[10px] bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-400 font-semibold px-1.5 py-0.5 rounded border dark:border-slate-800">
                           {highlightMatch(claim.id || "", query)}
                         </span>
-                        <span className="text-[10px] text-slate-400 font-medium">{claim.visit_date}</span>
+                        <span className="text-[10px] text-slate-400 dark:text-slate-500 font-medium">{claim.visit_date}</span>
                       </div>
                     </div>
                     {preview.score !== undefined && (
