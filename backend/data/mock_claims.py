@@ -30,6 +30,8 @@ MOCK_CLAIMS: list[dict] = [
         "diagnosis_description": "Pneumonia, unspecified organism",
         "coverage_start_date": "2025-01-01",
         "coverage_end_date": "2027-01-01",
+        "facility_name": "Kenyatta National Hospital",
+        "department": "outpatient",
         "items": [
             {
                 "service_code": "SHA-CONS-001",
@@ -58,6 +60,7 @@ MOCK_CLAIMS: list[dict] = [
         ],
         "claimed_amount": 6750,
         "scheme_code": "SHA-2025",
+        
     },
     {
         "id": "SHA-CLM-2026-002",
@@ -79,6 +82,8 @@ MOCK_CLAIMS: list[dict] = [
         "items": [],
         "claimed_amount": 0,
         "scheme_code": "SHA-2025",
+        "facility_name": "Mbagathi County Hospital",
+        "department": "outpatient",
     },
     {
         "id": "SHA-CLM-2026-003",
@@ -93,6 +98,8 @@ MOCK_CLAIMS: list[dict] = [
         "diagnosis_description": "Single spontaneous delivery",
         "coverage_start_date": "2025-06-01",
         "coverage_end_date": "2027-06-01",
+        "facility_name": "Pumwani Maternity Hospital",
+        "department": "maternity",
         "items": [
             {
                 "service_code": "SHA-MAT-001",
@@ -115,6 +122,10 @@ MOCK_CLAIMS: list[dict] = [
         ],
         "claimed_amount": 16400,
         "scheme_code": "SHA-2025",
+        "facility_name": "Pumwani Maternity Hospital",
+        "department": "maternity", 
+        "diagnosis_description": "Single spontaneous delivery",
+        "partograph_id": "PG-2026-014",
     },
     {
         "id": "SHA-CLM-2026-004",
@@ -129,6 +140,8 @@ MOCK_CLAIMS: list[dict] = [
         "diagnosis_description": "Type 2 diabetes mellitus without complications",
         "coverage_start_date": "2024-07-01",
         "coverage_end_date": "2027-07-01",
+        "facility_name": "Aga Khan Hospital Nairobi",
+        "department": "outpatient",
         "items": [
             {
                 "service_code": "SHA-CONS-002",
@@ -166,6 +179,8 @@ MOCK_CLAIMS: list[dict] = [
         "diagnosis_description": "Constipation",
         "coverage_start_date": "",
         "coverage_end_date": "2027-01-01",
+        "facility_name": "Nairobi Community Health Centre",
+        "department": "outpatient",
         "items": [
             {
                 # Error: item has no service code
@@ -178,4 +193,64 @@ MOCK_CLAIMS: list[dict] = [
         "claimed_amount": 500,
         "scheme_code": "SHA-2025",
     },
+    {
+        "id": "SHA-CLM-2026-006",
+        "patient_id": "INS-KE-30442",
+        "patient_name": "Samuel Kiptoo Rono",
+        "dob": "1958-02-11",
+        "gender": "M",
+        "facility_code": "KRG-005",
+        "facility_name": "Kerugoya Level 5 Hospital",
+        "department": "renal",
+        "visit_date": _yesterday,
+        "diagnosis_code": "N18.6",
+        "diagnosis_description": "End stage renal disease",
+        "coverage_start_date": "2025-02-01",
+        "coverage_end_date": "2027-02-01",
+        "sessions_this_week": 5,
+        "items": [
+            {
+                "service_code": "SHA-REN-002",
+                "description": "Haemodialysis session",
+                "quantity": 5,
+                "unit_price": 3000,
+            },
+        ],
+        "claimed_amount": 15000,
+        "scheme_code": "SHA-2025",
+    },
+    {
+        "id": "SHA-CLM-2026-007",
+        "patient_id": "INS-KE-51290",
+        "patient_name": "Faith Wambui Kariuki",
+        "dob": "1980-09-19",
+        "gender": "F",
+        "facility_code": "AGH-001",
+        "facility_name": "Aga Khan Hospital Nairobi",
+        "department": "surgical",
+        "visit_date": _three_days_ago,
+        "diagnosis_code": "K35.8",
+        "diagnosis_description": "Acute appendicitis",
+        "coverage_start_date": "2025-01-01",
+        "coverage_end_date": "2027-01-01",
+        "overnight_stay": True,
+        "postop_notes_attached": "",
+        "items": [
+            {
+                "service_code": "SHA-SURG-014",
+                "description": "Appendectomy",
+                "quantity": 1,
+                "unit_price": 55000,
+            },
+            {
+                "service_code": "SHA-ANES-002",
+                "description": "General anaesthesia",
+                "quantity": 1,
+                "unit_price": 7000,
+            },
+        ],
+        "claimed_amount": 62000,
+        "scheme_code": "SHA-2025",
+    },
 ]
+

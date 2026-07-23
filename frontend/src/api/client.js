@@ -29,5 +29,6 @@ export const api = {
       method: "POST",
       body: JSON.stringify(correctedData),
     }),
-  submitClaim: (id) => request(`/claims/${id}/submit`, { method: "POST" }),
+  getClaimAudit: (id) => request(`/claims/${id}/audit`),
+  verifyAuditChain: () => request(`/audit/verify`),
 };

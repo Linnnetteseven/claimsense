@@ -5,6 +5,8 @@ import StatusBadge from "./StatusBadge.jsx";
 import ErrorCard from "./ErrorCard.jsx";
 import { CheckIcon, SpinnerIcon } from "./icons.jsx";
 import { useClaimValidation } from "../hooks/useClaimValidation.js";
+import AuditTrailTab from "./AuditTrailTab.jsx";
+import DeptGuideTab from "./DeptGuideTab.jsx";
 
 /**
  * Main right workspace: patient profile header, tabbed details (Demographics, Claim Info, AI Validation, FHIR Preview),
@@ -33,12 +35,14 @@ export default function ValidationPanel({ claim, onValidationComplete }) {
     submit,
     reset,
   } = useClaimValidation(claim, onValidationComplete);
+
   useEffect(() => {
-  console.log("ValidationPanel - Current State:", state);
-  console.log("ValidationPanel - Validation Data:", validation);
-}, [state, validation]);
+    console.log("ValidationPanel - Current State:", state);
+    console.log("ValidationPanel - Validation Data:", validation);
+  }, [state, validation]);
+
   const [activeTab, setActiveTab] = useState("AI Validation");
-  
+
   // Document scan simulation state
   const [scanFile, setScanFile] = useState(null);
   const [scanState, setScanState] = useState("idle"); // "idle" | "scanning" | "done"
@@ -53,29 +57,15 @@ export default function ValidationPanel({ claim, onValidationComplete }) {
     reset();
   }, [claim?.id, reset]);
 
-  if (!claim) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 p-8 bg-slate-50/50 dark:bg-slate-900/30">
-        <svg className="w-16 h-16 text-slate-300 dark:text-slate-700 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-        </svg>
-        <p className="text-sm font-semibold text-slate-500 dark:text-slate-450">No Claim Selected</p>
-        <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">Select a claim from the left sidebar queue to begin validation.</p>
-      </div>
-    );
-  }
-
   // Handle simulated document drop/upload
   const handleFileUpload = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setScanFile(file);
     setScanState("scanning");
-    
-    // Simulate AI model OCR scanning
+
     setTimeout(() => {
       setScanState("done");
-      // Simulate extraction based on the claim type or default values
       setExtractedData({
         diagnosis_code: "A09",
         diagnosis_description: "Diarrhoea and gastroenteritis of infectious origin",
@@ -87,7 +77,6 @@ export default function ValidationPanel({ claim, onValidationComplete }) {
 
   const applyExtractedData = () => {
     if (!extractedData) return;
-    // Apply simulated changes to editing state
     Object.entries(extractedData).forEach(([field, value]) => {
       editField(field, value);
     });
@@ -95,7 +84,7 @@ export default function ValidationPanel({ claim, onValidationComplete }) {
   };
 
   // Determine current timeline active step
-  let activeStep = 0; // 0: Claim Received, 1: AI Initial Review, 2: Pending Corrections, 3: Ready for openIMIS / Submitted
+  let activeStep = 0;
   if (state === "idle") {
     activeStep = 0;
   } else if (state === "loading") {
@@ -117,7 +106,7 @@ export default function ValidationPanel({ claim, onValidationComplete }) {
           <p className="text-slate-500 dark:text-slate-400 text-sm mt-2 max-w-md mx-auto">
             The FHIR R4 ClaimResponse has been successfully signed off and posted to the openIMIS ledger in <strong>{submitResult.mode || "live"}</strong> mode.
           </p>
-          
+
           <div className="my-6 p-4 bg-slate-50 dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800 rounded-xl max-w-sm mx-auto flex items-center justify-between">
             <span className="text-xs text-slate-500 dark:text-slate-400 font-semibold uppercase tracking-wider">Final Adjudication Score</span>
             <span className="text-lg font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/30 px-3 py-1 rounded-lg border border-emerald-100 dark:border-emerald-900/40">
@@ -152,7 +141,6 @@ export default function ValidationPanel({ claim, onValidationComplete }) {
         <div className="bg-white dark:bg-slate-950 border-b border-slate-200 dark:border-slate-850 px-6 py-5 flex-shrink-0">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="flex items-center gap-4">
-              {/* Photo placeholder */}
               <div className="w-14 h-14 rounded-full bg-teal-50 dark:bg-teal-950/20 border border-teal-100 dark:border-teal-900/30 flex items-center justify-center text-teal-700 dark:text-teal-400 text-lg font-bold shadow-inner">
                 {claim.patient_name ? claim.patient_name.split(" ").map(n => n[0]).join("") : "PT"}
               </div>
@@ -182,7 +170,7 @@ export default function ValidationPanel({ claim, onValidationComplete }) {
         {/* Tabbed Navigation Selector */}
         <div className="bg-white dark:bg-slate-950 border-b border-slate-200 dark:border-slate-850 px-6 flex-shrink-0">
           <nav className="flex gap-6" aria-label="Tabs">
-            {["AI Validation", "Demographics", "Claim Info", "FHIR Preview"].map((tab) => {
+            {["AI Validation", "Demographics", "Claim Info", "FHIR Preview", "Audit Trail", "Dept Guide"].map((tab) => {
               const isActive = activeTab === tab;
               return (
                 <button
@@ -212,7 +200,6 @@ export default function ValidationPanel({ claim, onValidationComplete }) {
 
           {activeTab === "AI Validation" && (
             <div className="space-y-6">
-              {/* Document Scan Simulation Tool */}
               <div className="bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-850 rounded-2xl p-5 shadow-sm">
                 <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200 mb-2 flex items-center gap-2">
                   <svg className="w-5 h-5 text-teal-600 dark:text-teal-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -267,6 +254,7 @@ export default function ValidationPanel({ claim, onValidationComplete }) {
                         <strong className="text-slate-700 dark:text-slate-200 font-semibold">KES {extractedData.claimed_amount.toLocaleString()}</strong>
                       </div>
                     </div>
+
                     <div className="flex gap-2.5">
                       <button
                         type="button"
@@ -382,7 +370,6 @@ export default function ValidationPanel({ claim, onValidationComplete }) {
                     </div>
                   </div>
 
-                  {/* Actions footer bar */}
                   <div className="flex items-center gap-3 pt-2 bg-slate-50/50 dark:bg-slate-900/50 sticky bottom-0 z-10 py-4 border-t border-slate-200/50 dark:border-slate-850">
                     {hasEdits && (
                       <button
@@ -393,7 +380,7 @@ export default function ValidationPanel({ claim, onValidationComplete }) {
                         Re-validate with corrections
                       </button>
                     )}
-                    
+
                     <button
                       type="button"
                       onClick={submit}
@@ -406,7 +393,7 @@ export default function ValidationPanel({ claim, onValidationComplete }) {
                     >
                       {state === "submitting" ? "Submitting..." : "Submit to openIMIS →"}
                     </button>
-                    
+
                     <button
                       type="button"
                       onClick={reset}
@@ -528,6 +515,14 @@ export default function ValidationPanel({ claim, onValidationComplete }) {
               )}
             </div>
           )}
+
+          {activeTab === "Audit Trail" && (
+            <AuditTrailTab claimId={claim.id} />
+          )}
+
+          {activeTab === "Dept Guide" && (
+            <DeptGuideTab department={claim.department} />
+          )}
         </div>
       </div>
 
@@ -535,10 +530,8 @@ export default function ValidationPanel({ claim, onValidationComplete }) {
       <div className="w-64 border-l border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 flex flex-col flex-shrink-0 p-5">
         <h3 className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-6 mt-1">Status Timeline</h3>
         <div className="relative pl-6 space-y-8 flex-1">
-          {/* Vertical tracking line */}
           <div className="absolute left-[30px] top-2 bottom-6 w-0.5 bg-slate-200 dark:bg-slate-800" />
 
-          {/* Step 1 */}
           <div className="relative flex gap-3.5 items-start">
             <span className={`absolute left-0 w-3 h-3 rounded-full border-2 transform -translate-x-1.5 mt-1.5 transition-all duration-300 ${
               activeStep >= 0 ? "bg-teal-500 border-teal-500 scale-110 shadow-sm shadow-teal-500/50" : "bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
@@ -549,7 +542,6 @@ export default function ValidationPanel({ claim, onValidationComplete }) {
             </div>
           </div>
 
-          {/* Step 2 */}
           <div className="relative flex gap-3.5 items-start">
             <span className={`absolute left-0 w-3 h-3 rounded-full border-2 transform -translate-x-1.5 mt-1.5 transition-all duration-300 ${
               activeStep >= 1 ? "bg-teal-500 border-teal-500 scale-110 shadow-sm shadow-teal-500/50" : "bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
@@ -560,7 +552,6 @@ export default function ValidationPanel({ claim, onValidationComplete }) {
             </div>
           </div>
 
-          {/* Step 3 */}
           <div className="relative flex gap-3.5 items-start">
             <span className={`absolute left-0 w-3 h-3 rounded-full border-2 transform -translate-x-1.5 mt-1.5 transition-all duration-300 ${
               activeStep >= 2 ? "bg-teal-500 border-teal-500 scale-110 shadow-sm shadow-teal-500/50" : "bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
@@ -571,7 +562,6 @@ export default function ValidationPanel({ claim, onValidationComplete }) {
             </div>
           </div>
 
-          {/* Step 4 */}
           <div className="relative flex gap-3.5 items-start">
             <span className={`absolute left-0 w-3 h-3 rounded-full border-2 transform -translate-x-1.5 mt-1.5 transition-all duration-300 ${
               activeStep >= 3 ? "bg-emerald-500 border-emerald-500 scale-110 shadow-sm shadow-emerald-500/50" : "bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
@@ -603,6 +593,7 @@ ValidationPanel.propTypes = {
     patient_id: PropTypes.string,
     coverage_end_date: PropTypes.string,
     claimed_amount: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+    department: PropTypes.string,
   }),
   onValidationComplete: PropTypes.func,
 };
