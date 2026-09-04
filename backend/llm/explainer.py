@@ -1,5 +1,5 @@
 """
-Generates plain-English error explanations using Google Gemini 2.0 Flash.
+Generates plain-English error explanations using Google Gemini 3.8 Flash.
 
 Falls back to built-in rule suggestion text if:
   - GEMINI_API_KEY is not set in .env
@@ -82,7 +82,7 @@ Example:
 
     try:
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-3.8-flash",
             contents=prompt,
         )
 

@@ -6,12 +6,12 @@ import AddClaimModal from "./components/AddClaimModal.jsx";
 import { useClaims } from "./hooks/useClaims.js";
 
 export default function App() {
-  const [selectedClaim, setSelectedClaim] = useState(null);
   const [counts, setCounts] = useState({ total: 0, ready: 0, review: 0, errors: 0 });
 
   const { claims, loading, error, reload, patchPreview, addClaim } = useClaims();
   const [view, setView] = useState("landing");
   const [selectedId, setSelectedId] = useState(null);
+  const selectedClaim = claims.find((c) => c.id === selectedId) ?? null;
   const [addModalOpen, setAddModalOpen] = useState(false);
 
   const [darkMode, setDarkMode] = useState(() => {
@@ -137,9 +137,8 @@ export default function App() {
         <div className="flex-1 overflow-y-auto">
           <ClaimList
             selectedId={selectedId}
-            onSelect={(id, claim) => {
+            onSelect={(id) => {
               setSelectedId(id);
-              setSelectedClaim(claim);
             }}
             onCountsChange={setCounts}
           />

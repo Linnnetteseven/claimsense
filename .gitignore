@@ -16,3 +16,24 @@ frontend/.vite/
 
 # OS
 .DS_Store
+
+# Python
+backend/.venv/
+backend/__pycache__/
+backend/**/__pycache__/
+*.pyc
+
+# Node
+frontend/node_modules/
+frontend/dist/
+frontend/.vercel/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Editor / temporary backups
+*.bak
+*.backup
+*.backup-*

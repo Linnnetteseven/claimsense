@@ -22,7 +22,7 @@ const STEPS = [
   },
   { 
     n: "04", 
-    title: "Submit to openIMIS", 
+    title: "Submit to Social Health Authority", 
     body: "Forward the clean, fully validated claim to the ledger with one click for faster hospital payouts.",
     icon: <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
   },
@@ -101,7 +101,7 @@ export default function LandingPage({ claims, loading, onEnter, darkMode, onTogg
             <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#1565C0] to-[#00897B] dark:from-blue-400 dark:to-teal-400">Intelligence, Not More Paperwork.</span>
           </h1>
           <p className="text-slate-600 dark:text-slate-350 text-sm sm:text-base md:text-lg leading-relaxed font-medium max-w-2xl mx-auto">
-            Hakiki pairs SHA claims officers with an AI co-pilot to instantly validate openIMIS data. We don't replace your expertise—we eliminate the friction so you can process claims faster and with absolute confidence.
+            Hakiki pairs SHA claims officers with an AI co-pilot to instantly validate Social Health Authority data. We don't replace your expertise—we eliminate the friction so you can process claims faster and with absolute confidence.
           </p>
         </div>
 
@@ -205,8 +205,8 @@ export default function LandingPage({ claims, loading, onEnter, darkMode, onTogg
               <div className="mx-auto h-16 w-16 bg-teal-50 dark:bg-teal-950/20 rounded-2xl flex items-center justify-center mb-6">
                 <svg className="w-8 h-8 text-teal-600 dark:text-teal-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
               </div>
-              <h3 className="text-base sm:text-lg font-bold text-slate-900 dark:text-slate-100 mb-3">openIMIS Native</h3>
-              <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 font-medium leading-relaxed">Built from the ground up to integrate seamlessly with standard openIMIS FHIR structures. No complex implementation required.</p>
+              <h3 className="text-base sm:text-lg font-bold text-slate-900 dark:text-slate-100 mb-3">Social Health Authority Native</h3>
+              <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 font-medium leading-relaxed">Built from the ground up to integrate seamlessly with standard Social Health Authority FHIR structures. No complex implementation required.</p>
             </div>
             <div className="px-4">
               <div className="mx-auto h-16 w-16 bg-amber-50 dark:bg-amber-950/20 rounded-2xl flex items-center justify-center mb-6">
@@ -223,7 +223,7 @@ export default function LandingPage({ claims, loading, onEnter, darkMode, onTogg
       <div className="w-full bg-slate-900 py-16 sm:py-20 px-4 sm:px-6 text-center">
         <div className="max-w-3xl mx-auto">
           <h2 className="text-2xl sm:text-3xl font-extrabold text-white mb-4 sm:mb-6">Ready to empower your claims team?</h2>
-          <p className="text-sm sm:text-base text-slate-400 font-medium mb-8 sm:mb-10 px-4">Experience how Hakiki's AI validation engine can transform your openIMIS workflow today.</p>
+          <p className="text-sm sm:text-base text-slate-400 font-medium mb-8 sm:mb-10 px-4">Experience how Hakiki's AI validation engine can transform your Social Health Authority workflow today.</p>
           <button
             type="button"
             onClick={onEnter}
@@ -238,7 +238,7 @@ export default function LandingPage({ claims, loading, onEnter, darkMode, onTogg
       </div>
 
       <footer className="px-6 py-6 text-center text-xs text-slate-500 font-medium bg-slate-950">
-        Hakiki • Built for seamless openIMIS integration
+        Hakiki • Built for seamless Social Health Authority integration
       </footer>
     </div>
   );

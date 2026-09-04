@@ -1,97 +1,221 @@
 import PropTypes from "prop-types";
 import { CheckIcon, ErrorIcon, WarnIcon } from "./icons.jsx";
-import { EDITABLE_FIELDS, PASS_STYLE, SEVERITY_STYLES } from "../constants/status.js";
+import {
+  EDITABLE_FIELDS,
+  PASS_STYLE,
+  SEVERITY_STYLES,
+} from "../constants/status.js";
 
-/**
- * Renders one validation rule result — passed or failed.
- * Failing cards show the AI's plain-English explanation and, where the
- * underlying field is safely editable, an inline correction input.
- */
-export default function ErrorCard({ result, explanation, fieldValue, onChange }) {
-  const { passed, severity, rule_id: ruleId, message, field } = result;
+const QUICK_FIXES = {
+  "SHA-R1": "A09",
+  "SHA-R2": "3500",
+  "SHA-R3": null,
+  "SHA-R4": "SHA-OPD-001",
+  "SHA-R5": null,
+  "SHA-R6": null,
+  "SHA-R7": null,
+};
 
-  if (passed) {
-    return (
-      <div
-        className={`rounded-xl border p-4 flex items-center gap-3 shadow-sm transition-all ${PASS_STYLE.border} ${PASS_STYLE.bg}`}
-      >
-        <div className="w-5 h-5 rounded-full bg-emerald-100 flex items-center justify-center flex-shrink-0">
-          <CheckIcon className="w-3.5 h-3.5 text-emerald-600" />
-        </div>
-        <span className="text-sm font-semibold text-emerald-800">{message}</span>
-        <span
-          className={`ml-auto text-[10px] font-mono font-bold rounded-lg px-2.5 py-0.5 border ${PASS_STYLE.badge}`}
-        >
-          {ruleId}
-        </span>
-      </div>
-    );
+function EditBox({ field, value, onChange }) {
+  if (!field || !onChange || !EDITABLE_FIELDS.includes(field)) {
+    return null;
   }
 
-  const styles = SEVERITY_STYLES[severity] ?? SEVERITY_STYLES.error;
-  const canEdit = Boolean(field) && EDITABLE_FIELDS.includes(field) && field !== "multiple";
-  const inputId = `field-${ruleId}`;
+  const inputType =
+    field === "claimed_amount"
+      ? "number"
+      : field === "visit_date" || field === "coverage_end_date"
+        ? "date"
+        : "text";
 
   return (
-    <div className={`rounded-xl border p-5 shadow-sm transition-all bg-white dark:bg-slate-950 ${styles.border}`}>
-      <div className="flex items-start justify-between gap-3 mb-2.5">
-        <div className="flex items-start gap-2.5">
-          {severity === "error" ? (
-            <div className="w-5 h-5 rounded-full bg-red-100 dark:bg-red-950/20 flex items-center justify-center flex-shrink-0 mt-0.5">
-              <ErrorIcon className={`w-3.5 h-3.5 ${styles.icon}`} />
-            </div>
+    <div className="mt-3">
+      <label
+        htmlFor={`correction-${field}`}
+        className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1.5"
+      >
+        Correction
+      </label>
+
+      <input
+        id={`correction-${field}`}
+        type={inputType}
+        value={value ?? ""}
+        onChange={(e) => onChange(field, e.target.value)}
+        className="w-full text-xs font-semibold border border-slate-200 dark:border-slate-800 rounded-lg px-3.5 py-2.5 bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all"
+        placeholder={`Enter correct ${field.replace(/_/g, " ")}...`}
+      />
+    </div>
+  );
+}
+
+EditBox.propTypes = {
+  field: PropTypes.string,
+  value: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+  onChange: PropTypes.func,
+};
+
+export default function ErrorCard({
+  result,
+  explanation,
+  fieldValue,
+  onChange,
+}) {
+  const {
+    passed,
+    severity = "error",
+    rule_id: ruleId,
+    message,
+    field,
+    suggestion,
+    suggested_value: suggestedValue,
+    fix_value: fixValue,
+  } = result;
+
+  const style = passed
+    ? PASS_STYLE
+    : SEVERITY_STYLES[severity] ?? SEVERITY_STYLES.error;
+
+  const fallbackFix = QUICK_FIXES[ruleId];
+
+  const suggestedFix =
+    suggestedValue ??
+    fixValue ??
+    suggestion ??
+    fallbackFix;
+
+  const hasSuggestedFix =
+    !passed &&
+    suggestedFix !== null &&
+    suggestedFix !== undefined &&
+    String(suggestedFix).trim() !== "" &&
+    Boolean(field) &&
+    Boolean(onChange) &&
+    EDITABLE_FIELDS.includes(field);
+
+  const applySuggestedFix = () => {
+    if (hasSuggestedFix) {
+      onChange(field, suggestedFix);
+    }
+  };
+
+  return (
+    <div
+      className={`rounded-xl border ${style.border} ${style.bg} p-4 transition-all`}
+    >
+      <div className="flex items-start gap-3">
+        <div className={`mt-0.5 shrink-0 ${style.icon ?? ""}`}>
+          {passed ? (
+            <CheckIcon className="w-5 h-5" />
+          ) : severity === "warning" ? (
+            <WarnIcon className="w-5 h-5" />
           ) : (
-            <div className="w-5 h-5 rounded-full bg-amber-100 dark:bg-amber-950/20 flex items-center justify-center flex-shrink-0 mt-0.5">
-              <WarnIcon className={`w-3.5 h-3.5 ${styles.icon}`} />
+            <ErrorIcon className="w-5 h-5" />
+          )}
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center justify-between gap-3">
+            <span
+              className={`inline-flex items-center rounded-md px-2 py-1 text-[10px] font-bold uppercase tracking-wider ${
+                passed
+                  ? PASS_STYLE.badge
+                  : style.badge
+              }`}
+            >
+              {ruleId}
+            </span>
+
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+              {passed ? "Passed" : severity}
+            </span>
+          </div>
+
+          <p className="mt-2 text-sm font-semibold text-slate-800 dark:text-slate-100">
+            {message}
+          </p>
+
+          {!passed && explanation && (
+            <div className="mt-2">
+              <p className="text-xs leading-5 text-slate-600 dark:text-slate-400">
+                {explanation}
+              </p>
             </div>
           )}
-          <span className="text-sm font-bold text-slate-800 dark:text-slate-200 leading-tight">{message}</span>
+
+          {!passed && hasSuggestedFix && (
+            <div className="mt-3 rounded-lg border border-teal-200/70 dark:border-teal-900/50 bg-white/70 dark:bg-slate-950/40 p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-teal-700 dark:text-teal-400">
+                    Suggested fix
+                  </p>
+
+                  <p className="mt-1 text-xs font-semibold text-slate-700 dark:text-slate-200 break-words">
+                    Set{" "}
+                    <span className="font-mono text-teal-700 dark:text-teal-400">
+                      {field.replace(/_/g, " ")}
+                    </span>{" "}
+                    to{" "}
+                    <span className="font-mono font-bold">
+                      {String(suggestedFix)}
+                    </span>
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={applySuggestedFix}
+                  className="shrink-0 rounded-lg bg-teal-600 hover:bg-teal-700 active:scale-95 text-white text-[11px] font-bold px-3 py-2 transition-all shadow-sm"
+                >
+                  Apply fix
+                </button>
+              </div>
+            </div>
+          )}
+
+          {!passed && field && onChange && (
+            <EditBox
+              field={field}
+              value={fieldValue}
+              onChange={onChange}
+            />
+          )}
+
+          {!passed && field && onChange && (
+            <p className="mt-2 text-[10px] leading-4 text-slate-400 dark:text-slate-500">
+              Apply the suggested value above, or type your own correction
+              before re-validating.
+            </p>
+          )}
         </div>
-        <span
-          className={`text-[10px] font-mono font-bold rounded-lg px-2.5 py-0.5 flex-shrink-0 border ${styles.badge}`}
-        >
-          {ruleId}
-        </span>
       </div>
-
-      {/* AI's plain-English explanation of the failure */}
-      {explanation && (
-        <div className="pl-7 mt-2 mb-3 bg-slate-50 dark:bg-slate-900 border border-slate-100/80 dark:border-slate-850 rounded-lg p-3">
-          <span className="text-[10px] font-bold text-teal-700 dark:text-teal-400 uppercase tracking-wider block mb-1">AI Explanation</span>
-          <p className="text-xs text-slate-600 dark:text-slate-350 leading-relaxed font-medium">{explanation}</p>
-        </div>
-      )}
-
-      {/* Inline correction input for fixable fields */}
-      {canEdit && onChange && (
-        <div className="pl-7 mt-3">
-          <label htmlFor={inputId} className="block text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-1.5">
-            Correct field: <code className="bg-slate-100 dark:bg-slate-900 rounded px-1.5 py-0.5 text-slate-600 dark:text-slate-400 font-mono text-[9px] lowercase border dark:border-slate-800">{field.replace(/_/g, " ")}</code>
-          </label>
-          <input
-            id={inputId}
-            type="text"
-            value={fieldValue ?? ""}
-            onChange={(e) => onChange(field, e.target.value)}
-            className="w-full text-xs font-semibold border border-slate-200 dark:border-slate-800 rounded-lg px-3.5 py-2.5 bg-slate-50/50 dark:bg-slate-900/50 hover:bg-slate-50 dark:hover:bg-slate-900 focus:bg-white dark:focus:bg-slate-950 text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all shadow-inner"
-            placeholder={`Enter correct ${field.replace(/_/g, " ")}...`}
-          />
-        </div>
-      )}
     </div>
   );
 }
 
 ErrorCard.propTypes = {
   result: PropTypes.shape({
-    rule_id: PropTypes.string.isRequired,
     passed: PropTypes.bool.isRequired,
-    severity: PropTypes.oneOf(["error", "warning"]),
-    field: PropTypes.string,
+    severity: PropTypes.string,
+    rule_id: PropTypes.string.isRequired,
     message: PropTypes.string.isRequired,
+    field: PropTypes.string,
+    suggestion: PropTypes.string,
+    suggested_value: PropTypes.oneOfType([
+      PropTypes.string,
+      PropTypes.number,
+    ]),
+    fix_value: PropTypes.oneOfType([
+      PropTypes.string,
+      PropTypes.number,
+    ]),
   }).isRequired,
+
   explanation: PropTypes.string,
-  fieldValue: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+  fieldValue: PropTypes.oneOfType([
+    PropTypes.string,
+    PropTypes.number,
+  ]),
   onChange: PropTypes.func,
 };
-

@@ -25,6 +25,7 @@ export default function ValidationPanel({ claim, onValidationComplete }) {
     edits,
     error,
     submitResult,
+    currentClaim,
     hasEdits,
     canSubmit,
     validate,
@@ -95,7 +96,7 @@ export default function ValidationPanel({ claim, onValidationComplete }) {
   };
 
   // Determine current timeline active step
-  let activeStep = 0; // 0: Claim Received, 1: AI Initial Review, 2: Pending Corrections, 3: Ready for openIMIS / Submitted
+  let activeStep = 0; // 0: Claim Received, 1: AI Initial Review, 2: Pending Corrections, 3: Ready for Social Health Authority / Submitted
   if (state === "idle") {
     activeStep = 0;
   } else if (state === "loading") {
@@ -115,8 +116,7 @@ export default function ValidationPanel({ claim, onValidationComplete }) {
           </div>
           <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Claim Successfully Submitted</h2>
           <p className="text-slate-500 dark:text-slate-400 text-sm mt-2 max-w-md mx-auto">
-            The FHIR R4 ClaimResponse has been successfully signed off and posted to the openIMIS ledger in <strong>{submitResult.mode || "live"}</strong> mode.
-          </p>
+            The FHIR R4 ClaimResponse has been validated and is ready for submission to the Social Health Authority.</p>
           
           <div className="my-6 p-4 bg-slate-50 dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800 rounded-xl max-w-sm mx-auto flex items-center justify-between">
             <span className="text-xs text-slate-500 dark:text-slate-400 font-semibold uppercase tracking-wider">Final Adjudication Score</span>
@@ -154,12 +154,12 @@ export default function ValidationPanel({ claim, onValidationComplete }) {
             <div className="flex items-center gap-4">
               {/* Photo placeholder */}
               <div className="w-14 h-14 rounded-full bg-teal-50 dark:bg-teal-950/20 border border-teal-100 dark:border-teal-900/30 flex items-center justify-center text-teal-700 dark:text-teal-400 text-lg font-bold shadow-inner">
-                {claim.patient_name ? claim.patient_name.split(" ").map(n => n[0]).join("") : "PT"}
+                {currentClaim?.patient_name ? currentClaim.patient_name.split(" ").map(n => n[0]).join("") : "PT"}
               </div>
               <div>
                 <div className="flex items-center gap-2.5">
                   <h2 className="text-xl font-bold text-slate-800 dark:text-slate-100 leading-tight">
-                    {claim.patient_name}
+                    {currentClaim?.patient_name}
                   </h2>
                   {validation && (
                     <StatusBadge status={validation.status} color={validation.color} />
@@ -168,13 +168,13 @@ export default function ValidationPanel({ claim, onValidationComplete }) {
                 <p className="text-xs text-slate-500 dark:text-slate-400 font-medium mt-1">
                   ID: <code className="font-mono bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded px-1 text-slate-600 dark:text-slate-400">{claim.id}</code>
                   <span className="mx-2 text-slate-300 dark:text-slate-700">•</span>
-                  Facility: <span className="text-slate-700 dark:text-slate-300">{claim.facility_name}</span>
+                  Facility: <span className="text-slate-700 dark:text-slate-300">{currentClaim?.facility_name}</span>
                 </p>
               </div>
             </div>
             <div className="flex flex-col text-left md:text-right gap-1 md:self-end">
               <span className="text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase tracking-wider">Policy/Visit Date</span>
-              <span className="text-sm font-semibold text-slate-700 dark:text-slate-350">{claim.visit_date}</span>
+              <span className="text-sm font-semibold text-slate-700 dark:text-slate-350">{currentClaim?.visit_date}</span>
             </div>
           </div>
         </div>
@@ -352,13 +352,13 @@ export default function ValidationPanel({ claim, onValidationComplete }) {
                         <div>
                           <span className="text-[10px] text-slate-400 dark:text-slate-500 uppercase block">Diagnosis</span>
                           <span className="text-slate-800 dark:text-slate-200 font-semibold">
-                            {edits.diagnosis_code ?? claim.diagnosis_code} — {claim.diagnosis_description}
+                            {edits.diagnosis_code ?? currentClaim?.diagnosis_code ?? claim.diagnosis_code} — {currentClaim?.diagnosis_description ?? claim.diagnosis_description}
                           </span>
                         </div>
                         <div>
                           <span className="text-[10px] text-slate-400 dark:text-slate-500 uppercase block">Claimed Amount</span>
                           <span className="text-slate-800 dark:text-slate-200 font-semibold">
-                            KES {Number(edits.claimed_amount ?? claim.claimed_amount).toLocaleString()}
+                            KES {Number(edits.claimed_amount ?? currentClaim?.claimed_amount ?? claim.claimed_amount).toLocaleString()}
                           </span>
                         </div>
                       </div>
@@ -375,7 +375,11 @@ export default function ValidationPanel({ claim, onValidationComplete }) {
                           key={result.rule_id}
                           result={result}
                           explanation={validation.explanations?.[result.rule_id]}
-                          fieldValue={edits[result.field] ?? claim[result.field]}
+                          fieldValue={
+                            edits[result.field] ??
+                            currentClaim?.[result.field] ??
+                            claim[result.field]
+                          }
                           onChange={!result.passed ? editField : undefined}
                         />
                       ))}
@@ -404,7 +408,7 @@ export default function ValidationPanel({ claim, onValidationComplete }) {
                           : "bg-slate-300 dark:bg-slate-800 cursor-not-allowed opacity-70"
                       }`}
                     >
-                      {state === "submitting" ? "Submitting..." : "Submit to openIMIS →"}
+                      {state === "submitting" ? "Submitting..." : "Submit to Social Health Authority →"}
                     </button>
                     
                     <button
@@ -426,19 +430,19 @@ export default function ValidationPanel({ claim, onValidationComplete }) {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4 text-sm">
                 <div>
                   <span className="text-xs text-slate-400 dark:text-slate-500 block">Full Name</span>
-                  <span className="font-semibold text-slate-800 dark:text-slate-200">{claim.patient_name || "N/A"}</span>
+                  <span className="font-semibold text-slate-800 dark:text-slate-200">{currentClaim?.patient_name ?? claim.patient_name ?? "N/A"}</span>
                 </div>
                 <div>
                   <span className="text-xs text-slate-400 dark:text-slate-500 block">Policy ID Number</span>
-                  <span className="font-semibold text-slate-800 dark:text-slate-200 font-mono">{edits.patient_id ?? claim.patient_id ?? "N/A"}</span>
+                  <span className="font-semibold text-slate-800 dark:text-slate-200 font-mono">{edits.patient_id ?? currentClaim?.patient_id ?? claim.patient_id ?? "N/A"}</span>
                 </div>
                 <div>
                   <span className="text-xs text-slate-400 dark:text-slate-500 block">Policy Expiry / Coverage End Date</span>
-                  <span className="font-semibold text-slate-800 dark:text-slate-200 font-mono">{edits.coverage_end_date ?? claim.coverage_end_date ?? "N/A"}</span>
+                  <span className="font-semibold text-slate-800 dark:text-slate-200 font-mono">{edits.coverage_end_date ?? currentClaim?.coverage_end_date ?? claim.coverage_end_date ?? "N/A"}</span>
                 </div>
                 <div>
                   <span className="text-xs text-slate-400 dark:text-slate-500 block">Insurance Scheme</span>
-                  <span className="font-semibold text-slate-800 dark:text-slate-200">State Health Authority (SHA)</span>
+                  <span className="font-semibold text-slate-800 dark:text-slate-200">Social Health Authority (SHA)</span>
                 </div>
                 <div>
                   <span className="text-xs text-slate-400 dark:text-slate-500 block">Coverage Status</span>
@@ -460,23 +464,23 @@ export default function ValidationPanel({ claim, onValidationComplete }) {
                 </div>
                 <div>
                   <span className="text-xs text-slate-400 dark:text-slate-500 block">Visit Date</span>
-                  <span className="font-semibold text-slate-800 dark:text-slate-200 font-mono">{edits.visit_date ?? claim.visit_date}</span>
+                  <span className="font-semibold text-slate-800 dark:text-slate-200 font-mono">{edits.visit_date ?? currentClaim?.visit_date ?? claim.visit_date}</span>
                 </div>
                 <div>
                   <span className="text-xs text-slate-400 dark:text-slate-500 block">Facility Name</span>
-                  <span className="font-semibold text-slate-800 dark:text-slate-200">{claim.facility_name}</span>
+                  <span className="font-semibold text-slate-800 dark:text-slate-200">{currentClaim?.facility_name}</span>
                 </div>
                 <div>
                   <span className="text-xs text-slate-400 dark:text-slate-500 block">Admitting Diagnosis Code</span>
-                  <span className="font-semibold text-slate-850 dark:text-slate-200 font-mono bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded px-1">{edits.diagnosis_code ?? claim.diagnosis_code}</span>
+                  <span className="font-semibold text-slate-850 dark:text-slate-200 font-mono bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded px-1">{edits.diagnosis_code ?? currentClaim?.diagnosis_code ?? claim.diagnosis_code}</span>
                 </div>
                 <div>
                   <span className="text-xs text-slate-400 dark:text-slate-500 block">Diagnosis Description</span>
-                  <span className="font-medium text-slate-700 dark:text-slate-300">{claim.diagnosis_description}</span>
+                  <span className="font-medium text-slate-700 dark:text-slate-300">{currentClaim?.diagnosis_description}</span>
                 </div>
                 <div>
                   <span className="text-xs text-slate-400 dark:text-slate-500 block">Total Claimed Amount</span>
-                  <span className="font-extrabold text-slate-800 dark:text-slate-200">KES {Number(edits.claimed_amount ?? claim.claimed_amount).toLocaleString()}</span>
+                  <span className="font-extrabold text-slate-800 dark:text-slate-200">KES {Number(edits.claimed_amount ?? currentClaim?.claimed_amount ?? claim.claimed_amount).toLocaleString()}</span>
                 </div>
               </div>
 
@@ -499,11 +503,11 @@ export default function ValidationPanel({ claim, onValidationComplete }) {
                         <td className="p-3">Laboratory Investigation Panel (ICD Alignment Check)</td>
                         <td className="p-3 text-right font-medium">2,000</td>
                       </tr>
-                      {Number(edits.claimed_amount ?? claim.claimed_amount) > 3500 && (
+                      {Number(edits.claimed_amount ?? currentClaim?.claimed_amount ?? claim.claimed_amount) > 3500 && (
                         <tr>
                           <td className="p-3">Prescription Dispensation & Therapeutics</td>
                           <td className="p-3 text-right font-medium">
-                            {(Number(edits.claimed_amount ?? claim.claimed_amount) - 3500).toLocaleString()}
+                            {(Number(edits.claimed_amount ?? currentClaim?.claimed_amount ?? claim.claimed_amount) - 3500).toLocaleString()}
                           </td>
                         </tr>
                       )}
@@ -577,8 +581,8 @@ export default function ValidationPanel({ claim, onValidationComplete }) {
               activeStep >= 3 ? "bg-emerald-500 border-emerald-500 scale-110 shadow-sm shadow-emerald-500/50" : "bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
             }`} />
             <div className="pl-3.5">
-              <p className={`text-xs font-bold ${activeStep >= 3 ? "text-slate-800 dark:text-slate-200" : "text-slate-400 dark:text-slate-550"}`}>Ready for openIMIS</p>
-              <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">Clear ledger upload</p>
+              <p className={`text-xs font-bold ${activeStep >= 3 ? "text-slate-800 dark:text-slate-200" : "text-slate-400 dark:text-slate-550"}`}>Ready for Social Health Authority</p>
+              <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">Clear uploaded document</p>
             </div>
           </div>
         </div>
