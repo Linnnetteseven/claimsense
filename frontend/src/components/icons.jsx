@@ -1,3 +1,5 @@
+import PropTypes from "prop-types";
+
 // Small, dependency-free icon set (no icon library needed for six icons).
 // Each icon accepts a className so callers control size/color via Tailwind.
 
@@ -59,3 +61,8 @@ export function SpinnerIcon({ className = "w-8 h-8" }) {
     />
   );
 }
+
+CheckIcon.propTypes = { className: PropTypes.string };
+ErrorIcon.propTypes = { className: PropTypes.string };
+WarnIcon.propTypes = { className: PropTypes.string };
+SpinnerIcon.propTypes = { className: PropTypes.string };

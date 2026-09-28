@@ -32,7 +32,6 @@ export default function LandingPage({ claims, loading, onEnter, darkMode, onTogg
   const total = claims.length;
   const ready = claims.filter((c) => c._preview?.color === "green").length;
   const review = claims.filter((c) => c._preview?.color === "amber").length;
-  const highRisk = claims.filter((c) => c._preview?.color === "red").length;
   const avgScore = total
     ? Math.round(claims.reduce((sum, c) => sum + (c._preview?.score ?? 0), 0) / total)
     : 0;
@@ -101,7 +100,7 @@ export default function LandingPage({ claims, loading, onEnter, darkMode, onTogg
             <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#1565C0] to-[#00897B] dark:from-blue-400 dark:to-teal-400">Intelligence, Not More Paperwork.</span>
           </h1>
           <p className="text-slate-600 dark:text-slate-350 text-sm sm:text-base md:text-lg leading-relaxed font-medium max-w-2xl mx-auto">
-            Hakiki pairs SHA claims officers with an AI co-pilot to instantly validate Social Health Authority data. We don't replace your expertise—we eliminate the friction so you can process claims faster and with absolute confidence.
+            Hakiki pairs SHA claims officers with an AI co-pilot to instantly validate Social Health Authority data. We don&apos;t replace your expertise—we eliminate the friction so you can process claims faster and with absolute confidence.
           </p>
         </div>
 
@@ -213,7 +212,7 @@ export default function LandingPage({ claims, loading, onEnter, darkMode, onTogg
                 <svg className="w-8 h-8 text-amber-500 dark:text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>
               </div>
               <h3 className="text-base sm:text-lg font-bold text-slate-900 dark:text-slate-100 mb-3">Instant ROI</h3>
-              <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 font-medium leading-relaxed">Catch missing data, mismatched codes, and policy violations instantly before they ever hit the ledger, accelerating your hospital's cash flow.</p>
+              <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 font-medium leading-relaxed">Catch missing data, mismatched codes, and policy violations instantly before they ever hit the ledger, accelerating your hospital&apos;s cash flow.</p>
             </div>
           </div>
         </div>
@@ -223,7 +222,7 @@ export default function LandingPage({ claims, loading, onEnter, darkMode, onTogg
       <div className="w-full bg-slate-900 py-16 sm:py-20 px-4 sm:px-6 text-center">
         <div className="max-w-3xl mx-auto">
           <h2 className="text-2xl sm:text-3xl font-extrabold text-white mb-4 sm:mb-6">Ready to empower your claims team?</h2>
-          <p className="text-sm sm:text-base text-slate-400 font-medium mb-8 sm:mb-10 px-4">Experience how Hakiki's AI validation engine can transform your Social Health Authority workflow today.</p>
+          <p className="text-sm sm:text-base text-slate-400 font-medium mb-8 sm:mb-10 px-4">Experience how Hakiki&apos;s AI validation engine can transform your Social Health Authority workflow today.</p>
           <button
             type="button"
             onClick={onEnter}

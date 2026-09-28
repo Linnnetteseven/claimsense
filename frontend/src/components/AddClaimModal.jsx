@@ -258,7 +258,7 @@ export default function AddClaimModal({ onClose, onSubmit }) {
             </div>
             <div className="space-y-2">
               {form.items.map((item, index) => (
-                // eslint-disable-next-line react/no-array-index-key -- rows have no stable id until saved
+                // Index key: rows have no stable id until saved.
                 <div key={index} className="grid grid-cols-12 gap-2 items-center">
                   <input
                     value={item.service_code}

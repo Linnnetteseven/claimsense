@@ -280,6 +280,68 @@ def rule_amount_reasonable(claim: dict) -> RuleResult:
 # Errors first so the score reflects the most critical issues prominently.
 # ---------------------------------------------------------------------------
 
+def rule_maternity_partograph(claim: dict) -> RuleResult:
+    department = str(claim.get("department", "")).strip().lower()
+    diagnosis = str(claim.get("diagnosis_code", "")).strip().upper()
+    is_maternity = department == "maternity" or diagnosis.startswith("O")
+
+    if not is_maternity:
+        return _pass("MISSING_PARTOGRAPH")
+
+    partograph = str(claim.get("partograph_id", "")).strip()
+    if not partograph:
+        return RuleResult(
+            "MISSING_PARTOGRAPH",
+            False,
+            "error",
+            "partograph_id",
+            "Maternity claim has no linked partograph reference",
+            "Attach the partograph record ID before submitting — required under facility SOP for maternity claims.",
+        )
+    return _pass("MISSING_PARTOGRAPH")
+
+
+def rule_renal_session_frequency(claim: dict) -> RuleResult:
+    department = str(claim.get("department", "")).strip().lower()
+    if department != "renal":
+        return _pass("IMPLAUSIBLE_FREQUENCY", "warning")
+
+    sessions = claim.get("sessions_this_week")
+    if sessions is None:
+        return _pass("IMPLAUSIBLE_FREQUENCY", "warning")
+
+    if float(sessions) > 3:
+        return RuleResult(
+            "IMPLAUSIBLE_FREQUENCY",
+            False,
+            "warning",
+            "sessions_this_week",
+            f"{sessions} dialysis sessions this week exceeds the typical 3x/week pattern",
+            "Add a clinical note explaining the increased frequency, or correct the session count.",
+        )
+    return _pass("IMPLAUSIBLE_FREQUENCY", "warning")
+
+
+def rule_surgical_postop_notes(claim: dict) -> RuleResult:
+    department = str(claim.get("department", "")).strip().lower()
+    if department != "surgical":
+        return _pass("MISSING_POSTOP_NOTES")
+
+    if not claim.get("overnight_stay"):
+        return _pass("MISSING_POSTOP_NOTES")
+
+    if not str(claim.get("postop_notes_attached", "")).strip():
+        return RuleResult(
+            "MISSING_POSTOP_NOTES",
+            False,
+            "error",
+            "postop_notes_attached",
+            "This procedure included an overnight stay but has no post-op notes attached",
+            "Attach the discharge summary before submission.",
+        )
+    return _pass("MISSING_POSTOP_NOTES")
+
+
 ALL_RULES = [
     rule_required_fields,
     rule_icd10_format,
@@ -288,4 +350,7 @@ ALL_RULES = [
     rule_coverage_active,
     rule_amount_matches_items,
     rule_amount_reasonable,
+    rule_maternity_partograph,
+    rule_renal_session_frequency,
+    rule_surgical_postop_notes,
 ]

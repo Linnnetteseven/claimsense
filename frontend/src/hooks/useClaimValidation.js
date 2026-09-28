@@ -110,6 +110,8 @@ export function useClaimValidation(claim, onValidationComplete) {
     setEdits({});
     setError(null);
     setSubmitResult(null);
+    // Reset only when a different claim is selected, not on every refetch of the same one.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [claim?.id]);
 
   const reset = useCallback(() => {

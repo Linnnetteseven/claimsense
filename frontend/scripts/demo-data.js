@@ -1,4 +1,8 @@
-import demoClaims from "../../backend/data/demo_claims.json" with { type: "json" };
+import { readFileSync } from "node:fs";
+
+const demoClaims = JSON.parse(
+  readFileSync(new URL("../../backend/data/demo_claims.json", import.meta.url), "utf-8"),
+);
 
 const DATE_TOKEN = /^\{\{today([+-]\d+)d\}\}$/;
 
@@ -20,3 +24,4 @@ function resolveDates(value) {
 
 export const resolvedDemoClaims = () => resolveDates(demoClaims);
 export const demoClaimNumbers = () => demoClaims.map((claim) => claim.id);
+

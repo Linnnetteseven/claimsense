@@ -1,6 +1,7 @@
 module.exports = {
   root: true,
   env: { browser: true, es2021: true },
+  ignorePatterns: ["dist"],
   extends: [
     "eslint:recommended",
     "plugin:react/recommended",
@@ -21,4 +22,11 @@ module.exports = {
       { allowConstantExport: true },
     ],
   },
+  overrides: [
+    {
+      // Node-side seed/reset scripts and build config.
+      files: ["scripts/**/*.js", "*.config.js", ".eslintrc.cjs"],
+      env: { node: true, browser: false },
+    },
+  ],
 };

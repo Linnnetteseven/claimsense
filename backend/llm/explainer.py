@@ -11,6 +11,7 @@ import json
 import logging
 from google import genai
 from config import config
+from llm.sops import get_department_context
 
 logger = logging.getLogger(__name__)
 
@@ -53,12 +54,15 @@ def explain_errors(errors: list[dict], claim: dict) -> tuple[dict[str, str], boo
         for e in errors
     )
 
+    dept_context = get_department_context(claim.get("department"))
+
     context = (
         f"Claim ID: {claim.get('id', 'unknown')}\n"
         f"Patient: {claim.get('patient_name', 'Unknown')}\n"
         f"Facility: {claim.get('facility_name', 'Unknown')}\n"
         f"Diagnosis: {claim.get('diagnosis_code', '')} — "
         f"{claim.get('diagnosis_description', '')}\n"
+        f"{dept_context}\n"
     )
 
     prompt = f"""You are ClaimSense, helping hospital claims officers at SHA Kenya fix insurance claims.

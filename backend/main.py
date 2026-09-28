@@ -5,11 +5,16 @@ Routes:
   GET  /                           health + mode check
   GET  /claims                     list all claims with pre-scored summaries
   GET  /claims/{id}                fetch one claim by ID
-  POST /claims/{id}/validate       full pipeline: rules + Claude + FHIR ClaimResponse
+  POST /claims/{id}/validate       full pipeline: rules + Gemini + FHIR ClaimResponse + audit
   POST /claims/{id}/correct        apply edits + re-validate, save to session store
   POST /claims/{id}/submit         POST ClaimResponse to openIMIS (mock or live)
   POST /validate                   validate any arbitrary claim dict (for re-validation)
+  GET  /claims/{id}/audit          hash-chain audit history for one claim
+  GET  /audit/verify               recompute and verify the audit chain
 """
+from dotenv import load_dotenv
+load_dotenv()
+
 
 import logging
 from fastapi import Form, BackgroundTasks
@@ -26,6 +31,7 @@ from fhir.builder import build_claim_response
 from fhir.client import openimis
 from llm.explainer import explain_errors
 from repositories.claims import ClaimsRepository
+from audit import chain
 
 logging.basicConfig(
     level=logging.DEBUG if config.DEBUG else logging.INFO,
@@ -80,9 +86,10 @@ def get_claim_or_404(claim_id: str, repository: ClaimsRepository) -> dict:
 def full_pipeline(claim: dict) -> dict:
     """
     The core validation pipeline used by multiple routes:
-      1. Run all 7 validation rules
-      2. Ask Claude to explain errors in plain English
+      1. Run the deterministic validation rules
+      2. Ask Gemini to explain errors in plain English
       3. Build the FHIR R4 ClaimResponse resource
+      4. Record the result in the tamper-evident audit trail
     Returns everything the frontend needs in one response.
     """
     result = validate(claim)
@@ -90,13 +97,17 @@ def full_pipeline(claim: dict) -> dict:
     result["explanations"] = explanations
     result["ai_explanations_used"] = ai_used
     result["fhir_claim_response"] = build_claim_response(claim, result)
+    try:
+        chain.record_validation(claim.get("id"), result)
+    except Exception:
+        # The audit trail is optional; never fail validation over it.
+        logger.exception("Audit chain write failed for %s", claim.get("id"))
     return result
 
 
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
-
 @app.get("/")
 async def health_check():
     return {
@@ -106,6 +117,18 @@ async def health_check():
         "llm": "enabled" if config.llm_enabled else "disabled",
         "openimis_url": config.OPENIMIS_URL,
     }
+
+
+@app.get("/claims/{claim_id}/audit")
+async def get_claim_audit(claim_id: str):
+    """Full hash-chain history for one claim's validation runs."""
+    return {"claim_id": claim_id, "history": chain.get_chain_for_claim(claim_id)}
+
+
+@app.get("/audit/verify")
+async def verify_audit_chain():
+    """Recomputes every hash in the ledger and confirms nothing was altered."""
+    return chain.verify_chain()
 
 
 @app.get("/claims")
