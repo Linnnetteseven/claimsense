@@ -29,7 +29,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify(correctedData),
     }),
+  createClaim: (claimData) =>
+    request("/claims", { method: "POST", body: JSON.stringify(claimData) }),
   submitClaim: (id) => request(`/claims/${id}/submit`, { method: "POST" }),
+  // Demo only: restore a claim, or every seeded claim, to its original state.
+  resetClaim: (id) => request(`/claims/${id}/reset`, { method: "POST" }),
+  resetDemo: () => request("/demo/reset", { method: "POST" }),
   getClaimAudit: (id) => request(`/claims/${id}/audit`),
   verifyAuditChain: () => request(`/audit/verify`),
 };

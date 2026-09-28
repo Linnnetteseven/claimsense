@@ -6,13 +6,15 @@ import AddClaimModal from "./components/AddClaimModal.jsx";
 import { useClaims } from "./hooks/useClaims.js";
 
 export default function App() {
-  const [counts, setCounts] = useState({ total: 0, ready: 0, review: 0, errors: 0 });
-
-  const { claims, loading, error, reload, patchPreview, addClaim } = useClaims();
+  const { claims, loading, error, reload, patchClaim, addClaim, resetDemo } = useClaims();
   const [view, setView] = useState("landing");
   const [selectedId, setSelectedId] = useState(null);
   const selectedClaim = claims.find((c) => c.id === selectedId) ?? null;
   const [addModalOpen, setAddModalOpen] = useState(false);
+  // "idle" | "confirm" | "running"; bumping resetCount remounts the workspace.
+  const [resetState, setResetState] = useState("idle");
+  const [resetCount, setResetCount] = useState(0);
+  const [resetMessage, setResetMessage] = useState(null);
 
   const [darkMode, setDarkMode] = useState(() => {
     if (typeof window !== "undefined") {
@@ -33,8 +35,27 @@ export default function App() {
     }
   }, [darkMode]);
 
-  if (!selectedId && claims.length > 0) {
+  // Select the first claim on load, or when the selected one disappears (e.g. after a demo reset).
+  if (claims.length > 0 && !claims.some((c) => c.id === selectedId)) {
     setSelectedId(claims[0].id);
+  }
+
+  async function handleResetDemo() {
+    if (resetState === "idle") {
+      setResetState("confirm");
+      return;
+    }
+    setResetState("running");
+    setResetMessage(null);
+    try {
+      const { restored, removed } = await resetDemo();
+      setResetCount((n) => n + 1);
+      setResetMessage(`Demo reset: ${restored} claims restored, ${removed} added claims removed.`);
+    } catch (err) {
+      setResetMessage(`Demo reset failed: ${err.message}`);
+    } finally {
+      setResetState("idle");
+    }
   }
 
   const readyCount = claims.filter((c) => c._preview?.color === "green").length;
@@ -114,18 +135,40 @@ export default function App() {
             </p>
             {!loading && (
               <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-                {counts.total || claims.length} total • {counts.ready || readyCount} ready
+                {claims.length} total • {readyCount} ready
               </p>
             )}
           </div>
-          <button
-            type="button"
-            onClick={reload}
-            className="text-xs text-slate-500 dark:text-slate-400 hover:text-teal-600 dark:hover:text-teal-400 font-medium transition-colors"
-          >
-            Refresh
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={reload}
+              className="text-xs text-slate-500 dark:text-slate-400 hover:text-teal-600 dark:hover:text-teal-400 font-medium transition-colors"
+            >
+              Refresh
+            </button>
+            <button
+              type="button"
+              onClick={handleResetDemo}
+              onBlur={() => resetState === "confirm" && setResetState("idle")}
+              disabled={resetState === "running"}
+              title="Restore every seeded claim and remove claims added in this demo"
+              className={`text-xs font-medium transition-colors disabled:opacity-60 ${
+                resetState === "confirm"
+                  ? "text-red-600 dark:text-red-400 font-bold"
+                  : "text-slate-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400"
+              }`}
+            >
+              {resetState === "confirm" ? "Confirm reset?" : resetState === "running" ? "Resetting..." : "Reset demo"}
+            </button>
+          </div>
         </div>
+
+        {resetMessage && (
+          <p role="status" className="mx-4 mt-2 text-[11px] text-slate-500 dark:text-slate-400">
+            {resetMessage}
+          </p>
+        )}
 
         {error && (
           <div role="alert" className="mx-4 my-2 text-xs text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-950/20 border border-red-100 dark:border-red-900/40 rounded-lg p-3">
@@ -136,11 +179,10 @@ export default function App() {
         {/* Scrollable list of claims */}
         <div className="flex-1 overflow-y-auto">
           <ClaimList
+            claims={claims}
+            loading={loading}
             selectedId={selectedId}
-            onSelect={(id) => {
-              setSelectedId(id);
-            }}
-            onCountsChange={setCounts}
+            onSelect={setSelectedId}
           />
         </div>
 
@@ -154,9 +196,10 @@ export default function App() {
 
       {/* Right workspace: Dynamic Workspace */}
       <main className="flex-1 flex flex-col overflow-hidden bg-slate-100/60 dark:bg-slate-900/40">
-        <ValidationPanel 
-          claim={selectedClaim} 
-          onValidationComplete={patchPreview} 
+        <ValidationPanel
+          key={resetCount}
+          claim={selectedClaim}
+          onValidationComplete={patchClaim}
         />
       </main>
 

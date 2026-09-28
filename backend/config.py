@@ -98,6 +98,12 @@ class _Config:
         default=False,
     )
 
+    # Allows POST /claims/{id}/reset and POST /demo/reset. Turn off outside demos.
+    DEMO_RESET_ENABLED: bool = _env_bool(
+        "DEMO_RESET_ENABLED",
+        default=True,
+    )
+
     # ---------------------------------------------------------
     # Derived configuration
     # ---------------------------------------------------------

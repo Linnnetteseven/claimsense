@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { resolvedDemoClaims } from "./demo-data.js";
+import { demoSeedRows } from "./demo-data.js";
 
 const url = process.env.SUPABASE_URL;
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -18,9 +18,9 @@ const supabase = createClient(url, serviceRoleKey, {
   },
 });
 
-const claims = resolvedDemoClaims();
+const rows = demoSeedRows();
 
-const claimNumbers = claims.map((claim) => claim.id);
+const claimNumbers = rows.map((row) => row.claim_number);
 
 console.log(`Resetting ${claimNumbers.length} canonical demo claims...`);
 
@@ -33,12 +33,6 @@ if (deleteError) {
   console.error(`Demo reset failed: ${deleteError.message}`);
   process.exit(1);
 }
-
-const rows = claims.map((claim) => ({
-  claim_number: claim.id,
-  status: "draft",
-  claim_data: claim,
-}));
 
 const { error: seedError } = await supabase
   .from("claims")

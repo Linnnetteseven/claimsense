@@ -8,7 +8,7 @@ Adding a new rule: write the function, add it to ALL_RULES at the bottom.
 """
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dc_field
 from datetime import date, datetime
 from typing import Optional
 
@@ -20,22 +20,44 @@ class RuleResult:
     severity: str          # "error" deducts 20pts, "warning" deducts 10pts
     field: Optional[str]   # which field to highlight in the frontend
     message: str           # short technical description
-    suggestion: str        # what the officer should do
+    suggestion: str        # what the officer should do (advice text, never a field value)
+    # Every claim field the officer can edit to clear this rule. Defaults to [field].
+    fields: list[str] = dc_field(default_factory=list)
+    # A value the UI may apply directly, only when it can be computed deterministically.
+    suggested_value: Optional[object] = None
 
     def to_dict(self) -> dict:
-        return {
+        out = {
             "rule_id": self.rule_id,
             "passed": self.passed,
             "severity": self.severity,
             "field": self.field,
+            "fields": self.fields or ([self.field] if self.field else []),
             "message": self.message,
             "suggestion": self.suggestion,
         }
+        if self.suggested_value is not None:
+            out["suggested_value"] = self.suggested_value
+        return out
 
 
 def _pass(rule_id: str, severity: str = "error") -> RuleResult:
     """Shorthand for a passing result — keeps rule functions readable."""
     return RuleResult(rule_id, True, severity, None, "Check passed", "")
+
+
+def _to_float(value) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _items_total(items: list) -> float:
+    return sum(
+        _to_float(i.get("unit_price")) * max(1, int(_to_float(i.get("quantity")) or 1))
+        for i in items
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -51,8 +73,8 @@ def rule_required_fields(claim: dict) -> RuleResult:
     }
 
     missing = [
-        label
-        for field_key, label in required.items()
+        field_key
+        for field_key in required
         if not str(claim.get(field_key, "")).strip()
     ]
 
@@ -62,8 +84,9 @@ def rule_required_fields(claim: dict) -> RuleResult:
             False,
             "error",
             "multiple",
-            f"Required fields are empty: {', '.join(missing)}",
+            f"Required fields are empty: {', '.join(required[k] for k in missing)}",
             "Fill in all highlighted fields. SHA rejects any claim missing these values.",
+            fields=missing,
         )
 
     return _pass("MISSING_FIELDS")
@@ -192,11 +215,8 @@ def rule_amount_matches_items(claim: dict) -> RuleResult:
     if not items:
         return _pass("AMOUNT_MISMATCH", "warning")  # No items = caught elsewhere
 
-    items_total = sum(
-        float(i.get("unit_price", 0)) * max(1, int(i.get("quantity", 1)))
-        for i in items
-    )
-    claimed = float(claim.get("claimed_amount", 0))
+    items_total = _items_total(items)
+    claimed = _to_float(claim.get("claimed_amount"))
 
     if items_total == 0:
         return _pass("AMOUNT_MISMATCH", "warning")
@@ -214,6 +234,7 @@ def rule_amount_matches_items(claim: dict) -> RuleResult:
                 f"KES {items_total:,.0f} by {discrepancy_pct * 100:.1f}%"
             ),
             "Recalculate the total from your line items or correct the claimed amount.",
+            suggested_value=round(items_total, 2),
         )
 
     return _pass("AMOUNT_MISMATCH", "warning")
@@ -256,7 +277,7 @@ def rule_coverage_active(claim: dict) -> RuleResult:
 # ---------------------------------------------------------------------------
 
 def rule_amount_reasonable(claim: dict) -> RuleResult:
-    claimed = float(claim.get("claimed_amount", 0))
+    claimed = _to_float(claim.get("claimed_amount"))
     diagnosis = str(claim.get("diagnosis_code", "")).strip().upper()
 
     is_maternity = diagnosis.startswith("O")
@@ -310,7 +331,7 @@ def rule_renal_session_frequency(claim: dict) -> RuleResult:
     if sessions is None:
         return _pass("IMPLAUSIBLE_FREQUENCY", "warning")
 
-    if float(sessions) > 3:
+    if _to_float(sessions) > 3:
         return RuleResult(
             "IMPLAUSIBLE_FREQUENCY",
             False,

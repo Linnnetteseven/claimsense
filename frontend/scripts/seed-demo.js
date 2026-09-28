@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { resolvedDemoClaims } from "./demo-data.js";
+import { demoSeedRows } from "./demo-data.js";
 
 const url = process.env.SUPABASE_URL;
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -12,12 +12,7 @@ if (!url || !serviceRoleKey) {
 const supabase = createClient(url, serviceRoleKey, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
-const claims = resolvedDemoClaims();
-const rows = claims.map((claim) => ({
-  claim_number: claim.id,
-  status: "draft",
-  claim_data: claim,
-}));
+const rows = demoSeedRows();
 
 const { error } = await supabase
   .from("claims")

@@ -6,7 +6,7 @@ const demoClaims = JSON.parse(
 
 const DATE_TOKEN = /^\{\{today([+-]\d+)d\}\}$/;
 
-function resolveDates(value) {
+export function resolveDates(value) {
   if (typeof value === "string") {
     const match = value.match(DATE_TOKEN);
     if (!match) return value;
@@ -25,3 +25,16 @@ function resolveDates(value) {
 export const resolvedDemoClaims = () => resolveDates(demoClaims);
 export const demoClaimNumbers = () => demoClaims.map((claim) => claim.id);
 
+// One claims-table row for a seeded claim. The template keeps its date tokens so
+// the backend demo reset can re-resolve dates relative to the day of the reset.
+export function seedRow(template) {
+  return {
+    claim_number: template.id,
+    status: "draft",
+    claim_data: resolveDates(template),
+    seed_template: template,
+    is_seed: true,
+  };
+}
+
+export const demoSeedRows = () => demoClaims.map(seedRow);

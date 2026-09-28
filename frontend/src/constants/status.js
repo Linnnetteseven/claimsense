@@ -78,12 +78,25 @@ export const PASS_STYLE = {
   badge: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400",
 };
 
-// Fields the officer is allowed to edit directly from a failing ErrorCard.
-export const EDITABLE_FIELDS = [
-  "diagnosis_code",
-  "visit_date",
-  "claimed_amount",
-  "patient_id",
-  "coverage_end_date",
-];
+// Claim fields the officer can correct inline from a failing ErrorCard.
+// Rule results name these in `fields`; "items" gets its own line-item editor.
+export const FIELD_INPUTS = {
+  patient_id: { label: "Patient / insuree ID", type: "text" },
+  facility_code: { label: "Facility code", type: "text" },
+  visit_date: { label: "Visit date", type: "date" },
+  diagnosis_code: { label: "Diagnosis code", type: "text" },
+  coverage_end_date: { label: "Coverage end date", type: "date" },
+  claimed_amount: { label: "Claimed amount (KES)", type: "number" },
+  partograph_id: { label: "Partograph record ID", type: "text" },
+  postop_notes_attached: { label: "Post-op notes / discharge summary reference", type: "text" },
+  sessions_this_week: { label: "Dialysis sessions this week", type: "number" },
+  items: { label: "Service items", type: "items" },
+};
 
+// Coerce an input's string value to what the backend stores for that field.
+export function coerceFieldValue(field, value) {
+  if (FIELD_INPUTS[field]?.type === "number") {
+    return value === "" || value === null || value === undefined ? "" : Number(value);
+  }
+  return value;
+}

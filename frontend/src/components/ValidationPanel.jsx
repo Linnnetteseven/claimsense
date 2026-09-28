@@ -37,10 +37,16 @@ function ClaimWorkspace({ claim, onValidationComplete }) {
     canSubmit,
     validate,
     editField,
-    revalidateWithEdits,
+    discardEdits,
+    saveCorrections,
+    applyFix,
+    restoreOriginal,
     submit,
     reset,
   } = useClaimValidation(claim, onValidationComplete);
+
+  const workingClaim = { ...currentClaim, ...edits };
+  const saving = state === "saving";
 
   const [activeTab, setActiveTab] = useState("AI Validation");
 
@@ -90,7 +96,7 @@ function ClaimWorkspace({ claim, onValidationComplete }) {
     activeStep = 0;
   } else if (state === "loading") {
     activeStep = 1;
-  } else if (state === "results") {
+  } else if (state === "results" || state === "saving") {
     activeStep = validation?.error_count > 0 ? 2 : 3;
   } else if (state === "submitted" || state === "submitting") {
     activeStep = 3;
@@ -318,7 +324,7 @@ function ClaimWorkspace({ claim, onValidationComplete }) {
                 </div>
               )}
 
-              {(state === "results" || state === "submitting") && validation && (
+              {(state === "results" || state === "saving" || state === "submitting") && validation && (
                 <>
                   <div className="flex flex-col md:flex-row items-center gap-6 bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-850 rounded-2xl p-6 shadow-sm">
                     <ScoreGauge score={validation.score} />
@@ -364,26 +370,37 @@ function ClaimWorkspace({ claim, onValidationComplete }) {
                           key={result.rule_id}
                           result={result}
                           explanation={validation.explanations?.[result.rule_id]}
-                          fieldValue={
-                            edits[result.field] ??
-                            currentClaim?.[result.field] ??
-                            claim[result.field]
-                          }
-                          onChange={!result.passed ? editField : undefined}
+                          claim={workingClaim}
+                          onEdit={editField}
+                          onApplyFix={applyFix}
+                          onSave={() => saveCorrections()}
+                          busy={saving}
                         />
                       ))}
                     </div>
                   </div>
 
                   <div className="flex items-center gap-3 pt-2 bg-slate-50/50 dark:bg-slate-900/50 sticky bottom-0 z-10 py-4 border-t border-slate-200/50 dark:border-slate-850">
-                    {hasEdits && (
-                      <button
-                        type="button"
-                        onClick={revalidateWithEdits}
-                        className="flex-1 bg-slate-800 hover:bg-slate-900 dark:bg-slate-700 dark:hover:bg-slate-600 active:scale-95 text-white font-semibold text-sm py-3 rounded-xl transition-all shadow-md"
-                      >
-                        Re-validate with corrections
-                      </button>
+                    {(hasEdits || saving) && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => saveCorrections()}
+                          disabled={saving}
+                          className="flex-1 bg-slate-800 hover:bg-slate-900 dark:bg-slate-700 dark:hover:bg-slate-600 disabled:opacity-60 active:scale-95 text-white font-semibold text-sm py-3 rounded-xl transition-all shadow-md"
+                        >
+                          {saving ? "Saving & re-validating..." : "Save & re-validate"}
+                        </button>
+                        {!saving && (
+                          <button
+                            type="button"
+                            onClick={discardEdits}
+                            className="px-4 py-3 border border-slate-200 dark:border-slate-800 rounded-xl text-sm font-semibold text-slate-600 dark:text-slate-400 bg-white dark:bg-slate-950 hover:bg-slate-50 dark:hover:bg-slate-900 transition-all"
+                          >
+                            Discard edits
+                          </button>
+                        )}
+                      </>
                     )}
 
                     <button
@@ -401,10 +418,12 @@ function ClaimWorkspace({ claim, onValidationComplete }) {
 
                     <button
                       type="button"
-                      onClick={reset}
-                      className="px-5 py-3 border border-slate-200 dark:border-slate-800 rounded-xl text-sm font-semibold text-slate-600 dark:text-slate-400 bg-white dark:bg-slate-950 hover:bg-slate-50 dark:hover:bg-slate-900 active:scale-95 transition-all"
+                      onClick={restoreOriginal}
+                      disabled={saving}
+                      title="Demo: undo all saved corrections to this claim"
+                      className="px-5 py-3 border border-slate-200 dark:border-slate-800 rounded-xl text-sm font-semibold text-slate-600 dark:text-slate-400 bg-white dark:bg-slate-950 hover:bg-slate-50 dark:hover:bg-slate-900 disabled:opacity-60 active:scale-95 transition-all"
                     >
-                      Reset
+                      Restore original
                     </button>
                   </div>
                 </>

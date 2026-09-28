@@ -10,6 +10,8 @@ Routes:
   POST /claims/{id}/submit         POST ClaimResponse to openIMIS (mock or live)
   POST /validate                   validate any arbitrary claim dict (for re-validation)
   GET  /claims/{id}/audit          hash-chain audit history for one claim
+  POST /claims/{id}/reset          demo: restore one claim to its seeded state
+  POST /demo/reset                 demo: restore all seeded claims, drop UI-created ones
   GET  /audit/verify               recompute and verify the audit chain
 """
 from dotenv import load_dotenv
@@ -83,6 +85,14 @@ def get_claim_or_404(claim_id: str, repository: ClaimsRepository) -> dict:
     return match
 
 
+def _preview(result: dict) -> dict:
+    """The score summary shown in the claims queue."""
+    return {
+        key: result[key]
+        for key in ("score", "status", "color", "error_count", "warning_count")
+    }
+
+
 def full_pipeline(claim: dict) -> dict:
     """
     The core validation pipeline used by multiple routes:
@@ -153,19 +163,7 @@ async def list_claims(
         raise HTTPException(status_code=502, detail="Unable to retrieve draft claims") from exc
 
     # Score all claims
-    scored = []
-    for claim in claims:
-        v = validate(claim)
-        scored.append({
-            **claim,
-            "_preview": {
-                "score": v["score"],
-                "status": v["status"],
-                "color": v["color"],
-                "error_count": v["error_count"],
-                "warning_count": v["warning_count"],
-            },
-        })
+    scored = [{**claim, "_preview": _preview(validate(claim))} for claim in claims]
 
     # Filter by status
     if status == "ready":
@@ -211,22 +209,14 @@ async def create_claim(claim: dict):
     if not claim or not claim.get("id"):
         raise HTTPException(status_code=400, detail="Claim body must include an id")
     repository = claims_repository()
+    if repository.get_claim_by_number(claim["id"]) is not None:
+        raise HTTPException(status_code=409, detail=f"Claim '{claim['id']}' already exists")
     try:
         saved = repository.insert_claims([claim])[0]
     except Exception as exc:
         logger.exception("Unable to create Supabase draft claim")
         raise HTTPException(status_code=502, detail="Unable to create draft claim") from exc
-    result = validate(saved)
-    return {
-        "claim": saved,
-        "_preview": {
-            "score": result["score"],
-            "status": result["status"],
-            "color": result["color"],
-            "error_count": result["error_count"],
-            "warning_count": result["warning_count"],
-        },
-    }
+    return {"claim": saved, "_preview": _preview(validate(saved))}
 
 
 @app.post("/claims/{claim_id}/validate")
@@ -266,7 +256,7 @@ async def correct_claim(claim_id: str, corrections: dict):
     repository = claims_repository()
     original = get_claim_or_404(claim_id, repository)
 
-    # Merge: original fields overridden by corrections
+    # Merge: original fields overridden by corrections. The id is never editable.
     updated = {**original, **corrections, "id": claim_id}
     try:
         saved = repository.update_claim(claim_id, updated)
@@ -280,6 +270,41 @@ async def correct_claim(claim_id: str, corrections: dict):
     logger.info("Claim %s corrected — new score: %d", claim_id, result["score"])
 
     return {"claim": saved, "validation": result}
+
+
+def _require_demo_reset() -> None:
+    if not config.DEMO_RESET_ENABLED:
+        raise HTTPException(status_code=403, detail="Demo reset is disabled on this deployment")
+
+
+@app.post("/claims/{claim_id}/reset")
+async def reset_claim(claim_id: str):
+    """Demo only: restore one claim to its seeded (or originally created) state."""
+    _require_demo_reset()
+    repository = claims_repository()
+    try:
+        restored = repository.reset_claim(claim_id)
+    except Exception as exc:
+        logger.exception("Unable to reset claim %s", claim_id)
+        raise HTTPException(status_code=502, detail="Unable to reset claim") from exc
+    if restored is None:
+        raise HTTPException(status_code=404, detail=f"Claim '{claim_id}' has no saved original to restore")
+    return {"claim": restored, "_preview": _preview(validate(restored))}
+
+
+@app.post("/demo/reset")
+async def reset_demo():
+    """Demo only: restore every seeded claim and delete claims added through the UI."""
+    _require_demo_reset()
+    try:
+        counts = claims_repository().reset_demo()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Demo reset failed")
+        raise HTTPException(status_code=502, detail="Demo reset failed") from exc
+    logger.info("Demo reset: %s", counts)
+    return counts
 
 
 @app.post("/claims/{claim_id}/submit")

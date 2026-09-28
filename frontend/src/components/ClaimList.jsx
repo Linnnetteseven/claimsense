@@ -1,6 +1,5 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useMemo } from "react";
 import PropTypes from "prop-types";
-import { api } from "../api/client.js";
 import { LIST_BADGE_CLASSES, LIST_DOT_CLASSES } from "../constants/status.js";
 
 const highlightMatch = (text, query) => {
@@ -18,42 +17,13 @@ const highlightMatch = (text, query) => {
   );
 };
 
-export default function ClaimList({ selectedId, onSelect, onCountsChange }) {
-  const [allClaims, setAllClaims] = useState([]);  // source of truth — never touched after fetch
-  const [loading, setLoading] = useState(true);
+export default function ClaimList({ claims, loading, selectedId, onSelect }) {
   const [query, setQuery] = useState("");
   const [activeTab, setActiveTab] = useState("all");
 
-  // Fetch ONCE on mount
-  const fetchClaims = useCallback(async () => {
-    setLoading(true);
-    try {
-      const data = await api.getClaims({ q: "", status: "all" });
-      const fetched = data.claims ?? [];
-      setAllClaims(fetched);
-      if (onCountsChange) {
-        onCountsChange({
-          total: fetched.length,
-          ready: fetched.filter((c) => c._preview?.color === "green").length,
-          review: fetched.filter((c) => c._preview?.color === "amber").length,
-          errors: fetched.filter((c) => c._preview?.color === "red").length,
-        });
-      }
-    } catch (err) {
-      console.error("Failed to fetch claims:", err);
-      setAllClaims([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [onCountsChange]);
-
-  useEffect(() => {
-    fetchClaims();
-  }, [fetchClaims]);
-
   // Filter in memory — no API call, instant
   const filteredClaims = useMemo(() => {
-    let result = allClaims;
+    let result = claims;
 
     // Tab filter
     if (activeTab === "ready") {
@@ -76,7 +46,7 @@ export default function ClaimList({ selectedId, onSelect, onCountsChange }) {
     }
 
     return result;
-  }, [allClaims, query, activeTab]);
+  }, [claims, query, activeTab]);
 
   if (loading) {
     return (
@@ -172,7 +142,8 @@ export default function ClaimList({ selectedId, onSelect, onCountsChange }) {
 }
 
 ClaimList.propTypes = {
+  claims: PropTypes.arrayOf(PropTypes.object).isRequired,
+  loading: PropTypes.bool,
   selectedId: PropTypes.string,
   onSelect: PropTypes.func.isRequired,
-  onCountsChange: PropTypes.func,
 };

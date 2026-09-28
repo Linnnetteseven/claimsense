@@ -148,3 +148,26 @@ class TestEngine:
         )
         result = validate(broken)
         assert result["score"] >= 0
+
+
+class TestFixMetadata:
+    """Rule results tell the UI which fields fix them and when a value can be applied."""
+
+    def test_missing_fields_lists_each_missing_field(self):
+        result = rule_required_fields(_base_claim(patient_id="", diagnosis_code="")).to_dict()
+        assert result["fields"] == ["patient_id", "diagnosis_code"]
+
+    def test_single_field_rules_default_fields_to_field(self):
+        result = rule_icd10_format(_base_claim(diagnosis_code="ZZZ999")).to_dict()
+        assert result["fields"] == ["diagnosis_code"]
+
+    def test_amount_mismatch_suggests_item_total(self):
+        result = rule_amount_matches_items(_base_claim(claimed_amount=9000)).to_dict()
+        assert result["suggested_value"] == 1500
+
+    def test_advice_text_is_never_a_suggested_value(self):
+        result = rule_icd10_format(_base_claim(diagnosis_code="ZZZ999")).to_dict()
+        assert "suggested_value" not in result
+
+    def test_non_numeric_amount_does_not_crash(self):
+        assert rule_amount_matches_items(_base_claim(claimed_amount="abc")).passed is False

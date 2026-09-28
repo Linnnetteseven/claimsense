@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { seedRow } from "./demo-data.js";
 
 const url = process.env.SUPABASE_URL;
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -139,20 +140,13 @@ function pad(value, length = 3) {
   return String(value).padStart(length, "0");
 }
 
-function isoDate(date) {
-  return date.toISOString().slice(0, 10);
-}
-
+// Dates are stored as tokens and resolved at seed/reset time (see demo-data.js).
 function daysAgo(days) {
-  const date = new Date();
-  date.setDate(date.getDate() - days);
-  return isoDate(date);
+  return `{{today-${days}d}}`;
 }
 
 function daysFromNow(days) {
-  const date = new Date();
-  date.setDate(date.getDate() + days);
-  return isoDate(date);
+  return `{{today+${days}d}}`;
 }
 
 function makeItems(diagnosis, index) {
@@ -280,11 +274,7 @@ const claims = Array.from(
   (_, index) => makeClaim(index)
 );
 
-const rows = claims.map((claim) => ({
-  claim_number: claim.id,
-  status: "draft",
-  claim_data: claim,
-}));
+const rows = claims.map(seedRow);
 
 console.log(`Preparing ${rows.length} demo claims...`);
 
