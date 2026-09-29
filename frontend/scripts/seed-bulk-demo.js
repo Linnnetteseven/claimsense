@@ -192,6 +192,7 @@ function makeClaim(index) {
   }
   const renal = diagnosisCode.startsWith("QB94");
 
+  const staffNumber = (index % facilities.length) * 5 + (Math.floor(index / facilities.length) % 5);
   const dobYear = 1970 + (index % 40);
 
   return {
@@ -214,9 +215,9 @@ function makeClaim(index) {
     ...(maternity ? { partograph_id: `PG-${pad(index + 1, 5)}` } : {}),
     fund,
     ...(preauthRef ? { preauth_ref: preauthRef } : {}),
-    // Demo registry numbers, not real PUIDs.
-    practitioner_id: `PUID-${pad(10000 + (index % 40), 7)}-${index % 10}`,
-    practitioner_name: `Dr. ${lastNames[(index * 7) % lastNames.length]}`,
+    // Each facility has five practitioners; one registry number per person. Demo numbers, not real PUIDs.
+    practitioner_id: `PUID-${pad(10000 + staffNumber, 7)}-${staffNumber % 10}`,
+    practitioner_name: `Dr. ${lastNames[staffNumber % lastNames.length]}`,
 
     coverage_start_date: "2025-01-01",
     coverage_end_date: coverageEndDate,

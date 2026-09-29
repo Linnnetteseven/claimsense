@@ -137,6 +137,37 @@ class ClaimsRepository:
         ).order("created_at", desc=True).limit(1).execute()
         return (response.data or [None])[0]
 
+    def find_patient_ids(self, name: str, dob: str, exclude: str = "") -> list[dict]:
+        """SHA numbers on other claims for the same patient name and date of birth."""
+        if not name or not dob:
+            return []
+        response = self._client.table(self._TABLE).select("claim_number, claim_data").ilike(
+            "claim_data->>patient_name", name.strip()
+        ).eq("claim_data->>dob", dob.strip()).limit(20).execute()
+        found = {}
+        for row in response.data or []:
+            data = row.get("claim_data") or {}
+            pid = str(data.get("patient_id") or "").strip()
+            if pid and row["claim_number"] != exclude:
+                found.setdefault(pid, {"patient_id": pid, "claim_number": row["claim_number"],
+                                       "facility_name": data.get("facility_name", "")})
+        return list(found.values())
+
+    def facility_practitioners(self, facility_code: str) -> list[dict]:
+        """Practitioners (registry number and name) seen on claims from this facility."""
+        if not facility_code:
+            return []
+        response = self._client.table(self._TABLE).select("claim_data").eq(
+            "claim_data->>facility_code", facility_code.strip()
+        ).limit(500).execute()
+        roster = {}
+        for row in response.data or []:
+            data = row.get("claim_data") or {}
+            pid = str(data.get("practitioner_id") or "").strip()
+            if pid:
+                roster.setdefault(pid, {"practitioner_id": pid, "practitioner_name": data.get("practitioner_name", "")})
+        return sorted(roster.values(), key=lambda p: p["practitioner_name"])
+
     def delete_claims(self, claim_numbers: list[str]) -> None:
         if claim_numbers:
             self._client.table(self._TABLE).delete().in_(

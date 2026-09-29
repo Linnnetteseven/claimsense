@@ -39,6 +39,7 @@ from fhir.kenya_bundle_builder import build_kenya_eclaims_bundle
 from his import handoff as his_handoff
 from llm.explainer import explain_errors
 from suggest.enrich import apply as suggest_apply, plan as suggest_plan
+from suggest.identity import RepositoryLookups
 from repositories.claims import ClaimsRepository
 from audit import chain
 
@@ -104,7 +105,7 @@ def _preview(result: dict) -> dict:
     }
 
 
-def full_pipeline(claim: dict) -> dict:
+def full_pipeline(claim: dict, lookups=None) -> dict:
     """
     The core validation pipeline used by multiple routes:
       1. Run the deterministic validation rules
@@ -115,7 +116,7 @@ def full_pipeline(claim: dict) -> dict:
     """
     result = validate(claim)
     # Suggestions: a validated shortlist per rule; Gemini may pick, the rules re-check.
-    targets = suggest_plan(result, claim)
+    targets = suggest_plan(result, claim, lookups)
     explained, ai_used = explain_errors(result["errors"] + result["warnings"], claim, targets)
     suggest_apply(result, claim, targets, {r: e["pick"] for r, e in explained.items() if e.get("pick")})
     result["explanations"] = {rule_id: e["text"] for rule_id, e in explained.items()}
@@ -239,9 +240,10 @@ async def create_claim(claim: dict):
 @app.post("/claims/{claim_id}/validate")
 async def validate_claim(claim_id: str):
     """Full validation pipeline for a claim fetched by ID."""
-    claim = get_claim_or_404(claim_id, claims_repository())
+    repository = claims_repository()
+    claim = get_claim_or_404(claim_id, repository)
     logger.info("Validating %s", claim_id)
-    result = full_pipeline(claim)
+    result = full_pipeline(claim, RepositoryLookups(repository))
     logger.info(
         "%s — score: %d, errors: %d, warnings: %d",
         claim_id,
@@ -283,7 +285,7 @@ async def correct_claim(claim_id: str, corrections: dict):
     if saved is None:
         raise HTTPException(status_code=404, detail=f"Claim '{claim_id}' not found")
 
-    result = full_pipeline(saved)
+    result = full_pipeline(saved, RepositoryLookups(repository))
     logger.info("Claim %s corrected — new score: %d", claim_id, result["score"])
 
     return {"claim": saved, "validation": result}

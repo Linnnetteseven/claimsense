@@ -105,3 +105,100 @@ class TestEnrich:
         enrich.apply(result, claim, targets, {})
         fixed = {**claim, **_result(result, "EMPTY_ITEMS")["suggested_changes"]}
         assert run_rule(RULES_BY_ID["EMPTY_ITEMS"], fixed).passed
+
+
+class FakeLookups:
+    def __init__(self, patients=(), roster=()):
+        self._patients, self._roster = list(patients), list(roster)
+
+    def patient_ids(self, claim):
+        return self._patients
+
+    def practitioners(self, claim):
+        return self._roster
+
+
+ROSTER = [
+    {"practitioner_id": "PUID-1", "practitioner_name": "Dr. Kamau"},
+    {"practitioner_id": "PUID-2", "practitioner_name": "Dr. Mwangi"},
+]
+
+
+class TestIdentity:
+    def _run(self, claim, lookups):
+        result = validate(claim)
+        enrich.apply(result, claim, enrich.plan(result, claim, lookups), {})
+        return result
+
+    def test_patient_id_from_single_earlier_claim(self):
+        claim = _demo("SHA-CLM-2026-005")
+        lookups = FakeLookups(patients=[{"patient_id": "SHA-PAT-7", "claim_number": "C-7", "facility_name": "Githurai"}])
+        r = _result(self._run(claim, lookups), "MISSING_FIELDS")
+        assert r["suggested_changes"] == {"patient_id": "SHA-PAT-7"}
+        assert "same name and date of birth" in r["suggestion_source"]
+
+    def test_several_patient_ids_become_a_pick_list(self):
+        found = [{"patient_id": p, "claim_number": "C", "facility_name": "F"} for p in ("A-1", "B-2")]
+        r = _result(self._run(_demo("SHA-CLM-2026-005"), FakeLookups(patients=found)), "MISSING_FIELDS")
+        assert "suggested_changes" not in r and [c["changes"]["patient_id"] for c in r["suggested_choices"]] == ["A-1", "B-2"]
+
+    def test_unknown_patient_gets_guidance_not_an_id(self):
+        claim = {**_demo("SHA-CLM-2026-005"), "patient_name": "Unknown Patient"}
+        r = _result(self._run(claim, FakeLookups(patients=[{"patient_id": "X", "claim_number": "C", "facility_name": "F"}])), "MISSING_FIELDS")
+        assert "suggested_changes" not in r and "SHA card" in r["suggestion_note"]
+
+    def test_typed_practitioner_name_matches_roster(self):
+        r = _result(self._run(_demo("SHA-CLM-2026-005"), FakeLookups(roster=ROSTER)), "FHIR_BUNDLE_VALID")
+        assert r["suggested_changes"] == {"practitioner_id": "PUID-1", "practitioner_name": "Dr. Kamau"}
+
+    def test_no_name_shows_roster_to_choose_from(self):
+        claim = {**_demo("SHA-CLM-2026-005"), "practitioner_name": ""}
+        r = _result(self._run(claim, FakeLookups(roster=ROSTER)), "FHIR_BUNDLE_VALID")
+        assert "suggested_changes" not in r and len(r["suggested_choices"]) == 2
+
+    def test_empty_roster_gives_guidance(self):
+        r = _result(self._run(_demo("SHA-CLM-2026-005"), FakeLookups()), "FHIR_BUNDLE_VALID")
+        assert "PUID" in r["suggestion_note"]
+
+    def test_identifiers_never_reach_the_prompt(self):
+        from llm.explainer import build_prompt
+        claim = _demo("SHA-CLM-2026-005")
+        lookups = FakeLookups(patients=[{"patient_id": "SHA-PAT-7", "claim_number": "C-7", "facility_name": "G"}], roster=ROSTER)
+        result = validate(claim)
+        targets = enrich.plan(result, claim, lookups)
+        prompt = build_prompt(result["errors"], claim, targets)
+        assert "SHA-PAT-7" not in prompt and "PUID-1" not in prompt and "Wambui" not in prompt
+        assert "Apply fix" in prompt
+
+    def test_applying_both_fixes_clears_the_rules(self):
+        claim = _demo("SHA-CLM-2026-005")
+        lookups = FakeLookups(patients=[{"patient_id": "SHA-PAT-7", "claim_number": "C-7", "facility_name": "G"}], roster=ROSTER)
+        result = self._run(claim, lookups)
+        for rule_id in ("MISSING_FIELDS", "FHIR_BUNDLE_VALID", "EMPTY_ITEMS"):
+            claim = {**claim, **_result(result, rule_id)["suggested_changes"]}
+        after = validate(claim)
+        assert after["error_count"] == 0, [r["rule_id"] for r in after["errors"]]
+
+
+class TestMoreFixes:
+    def test_phc_total_offers_both_ways_out(self):
+        claim = _demo("SHA-CLM-2026-008")
+        result = validate(claim)
+        enrich.apply(result, claim, enrich.plan(result, claim), {})
+        choices = _result(result, "PHC_ZERO_TOTAL")["suggested_choices"]
+        zeroed = {**claim, **choices[0]["changes"]}
+        assert validate(zeroed)["error_count"] == 0
+        assert choices[1]["changes"] == {"fund": "SHIF"}
+
+    def test_wrong_level_code_gets_a_replacement(self):
+        # Consultation SHA-12-001 is levels 2-4; at a level 6 inpatient stay a per diem fits.
+        claim = {**_demo("SHA-CLM-2026-001")}
+        claim["items"] = [{**claim["items"][0], "service_code": "SHA-12-001"}]
+        result = validate(claim)
+        targets = enrich.plan(result, claim)
+        assert targets["INTERVENTION_FACILITY_LEVEL"].candidates[0][0] == "SHA-07-001"
+        # Weak wording match, so no automatic pick: Gemini chooses from the shortlist.
+        enrich.apply(result, claim, targets, {"INTERVENTION_FACILITY_LEVEL": {"code": "SHA-07-001", "reason": "stay"}})
+        fix = _result(result, "INTERVENTION_FACILITY_LEVEL")["suggested_changes"]["items"][0]
+        assert fix["service_code"] == "SHA-07-001"
+        assert run_rule(RULES_BY_ID["INTERVENTION_FACILITY_LEVEL"], {**claim, "items": [fix]}).passed

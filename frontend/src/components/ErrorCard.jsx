@@ -199,6 +199,7 @@ export default function ErrorCard({ result, explanation, fixSteps, claim, onEdit
     suggestion_source: suggestionSource,
     suggestion_reason: suggestionReason,
     suggestion_note: suggestionNote,
+    suggested_choices: suggestedChoices,
   } = result;
 
   const style = passed ? PASS_STYLE : SEVERITY_STYLES[severity] ?? SEVERITY_STYLES.error;
@@ -245,6 +246,28 @@ export default function ErrorCard({ result, explanation, fixSteps, claim, onEdit
 
           {!passed && advice && (
             <p className="mt-2 text-xs leading-5 text-slate-600 dark:text-slate-400">{advice}</p>
+          )}
+
+          {!passed && suggestedChoices?.length > 0 && onApplyFix && (
+            <div className="mt-3 rounded-lg border border-teal-200/70 dark:border-teal-900/50 bg-white/70 dark:bg-slate-950/40 p-3">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-teal-700 dark:text-teal-400">Choose one</p>
+              {suggestionSource && (
+                <p className="mt-0.5 text-[10px] text-slate-400 dark:text-slate-500">{suggestionSource}</p>
+              )}
+              <div className="mt-2 flex flex-wrap gap-2">
+                {suggestedChoices.map((choice) => (
+                  <button
+                    key={choice.label}
+                    type="button"
+                    disabled={busy}
+                    onClick={() => onApplyFix(choice.changes)}
+                    className="rounded-lg border border-teal-300 dark:border-teal-800 text-teal-800 dark:text-teal-300 hover:bg-teal-50 dark:hover:bg-teal-950/30 disabled:opacity-60 text-[11px] font-semibold px-2.5 py-1.5 transition-all"
+                  >
+                    {choice.label}
+                  </button>
+                ))}
+              </div>
+            </div>
           )}
 
           {!passed && suggestionNote && (
@@ -340,6 +363,7 @@ ErrorCard.propTypes = {
     suggestion_source: PropTypes.string,
     suggestion_reason: PropTypes.string,
     suggestion_note: PropTypes.string,
+    suggested_choices: PropTypes.arrayOf(PropTypes.shape({ label: PropTypes.string, changes: PropTypes.object })),
   }).isRequired,
   explanation: PropTypes.string,
   fixSteps: PropTypes.arrayOf(PropTypes.string),

@@ -22,6 +22,13 @@ from validation.rules import _BILLABLE_CODE
 from data.sha_tariffs import get_intervention
 
 INTERVENTION_RULES = ("EMPTY_ITEMS", "SHA_SERVICE_CODE_FORMAT", "INTERVENTION_KNOWN")
+# Rules where a valid code exists but does not fit this claim: offer a replacement.
+REPLACEMENT_RULES = (
+    "INTERVENTION_FACILITY_LEVEL",
+    "INTERVENTION_ACCESS_POINT",
+    "INTERVENTION_ELIGIBILITY",
+    "INTERVENTION_DIAGNOSIS_MATCH",
+)
 
 
 @dataclass
@@ -32,10 +39,19 @@ class Target:
     item_index: Optional[int] = None      # 0-based item to fix; None = add a first item
     default: Optional[str] = None         # deterministic pick when Gemini gives none
     note: Optional[str] = None            # guidance when there is nothing valid to suggest
+    ready: Optional[dict] = None          # identity suggestions, computed without Gemini
+    hint: Optional[str] = None            # what Hakiki offers, for the prompt (no identifiers)
     _objects: dict = field(default_factory=dict)
 
 
 def _bad_item(claim: dict, rule_id: str) -> Optional[int]:
+    if rule_id in REPLACEMENT_RULES:
+        from validation.rules import RULES_BY_ID, run_rule
+
+        for i, item in enumerate(claim.get("items") or []):
+            if not run_rule(RULES_BY_ID[rule_id], {**claim, "items": [item]}).passed:
+                return i
+        return None
     for i, item in enumerate(claim.get("items") or []):
         code = str(item.get("service_code", "")).strip().upper()
         if rule_id == "EMPTY_ITEMS" and not code:
@@ -47,11 +63,23 @@ def _bad_item(claim: dict, rule_id: str) -> Optional[int]:
     return None
 
 
-def plan(result: dict, claim: dict) -> dict[str, Target]:
+def plan(result: dict, claim: dict, lookups=None) -> dict[str, Target]:
     targets: dict[str, Target] = {}
     failed = {r["rule_id"]: r for r in result["results"] if not r["passed"]}
 
-    for rule_id in INTERVENTION_RULES:
+    if lookups is not None:
+        from suggest.identity import patient_suggestion, practitioner_suggestion, prompt_hint
+
+        missing = failed.get("MISSING_FIELDS")
+        if missing and "patient_id" in missing.get("fields", []):
+            update = patient_suggestion(claim, lookups)
+            targets["MISSING_FIELDS"] = Target("MISSING_FIELDS", "identity", ready=update, hint=prompt_hint(update))
+        bundle = failed.get("FHIR_BUNDLE_VALID")
+        if bundle and "practitioner_id" in bundle.get("fields", []):
+            update = practitioner_suggestion(claim, lookups)
+            targets["FHIR_BUNDLE_VALID"] = Target("FHIR_BUNDLE_VALID", "identity", ready=update, hint=prompt_hint(update))
+
+    for rule_id in INTERVENTION_RULES + REPLACEMENT_RULES:
         if rule_id not in failed or failed[rule_id].get("suggested_changes"):
             continue
         index = _bad_item(claim, rule_id)
@@ -72,6 +100,19 @@ def plan(result: dict, claim: dict) -> dict[str, Target]:
                 "at levels 2-4 is claimed on the PHC fund."
             )
         targets[rule_id] = target
+
+    # PHC and capitation: two valid ways out, the officer knows which is true.
+    for rule_id in ("PHC_ZERO_TOTAL", "CAPITATION_PAYMENT"):
+        if rule_id in failed:
+            zeroed = [{**i, "unit_price": 0, **({"net": 0} if "net" in i else {})} for i in claim.get("items") or []]
+            choices = [{"label": "It is a PHC claim: set the fund to PHC and all prices to 0",
+                        "changes": {"fund": "PHC", "items": zeroed, "claimed_amount": 0}}]
+            if rule_id == "PHC_ZERO_TOTAL":
+                choices.append({"label": "It is not a PHC claim: set the fund to SHIF",
+                                "changes": {"fund": "SHIF"}})
+            update = {"suggested_choices": choices, "suggestion_source": "SHA payment rules"}
+            targets[rule_id] = Target(rule_id, "identity", ready=update,
+                                      hint="Hakiki shows a short list to choose from; tell the officer to pick the correct one.")
 
     icd = failed.get("INVALID_ICD11")
     if icd and not icd.get("suggested_changes") and claim.get("diagnosis_description"):
@@ -101,6 +142,10 @@ def apply(result: dict, claim: dict, targets: dict[str, Target], picks: dict[str
             by_rule.setdefault(r["rule_id"], []).append(r)
 
     for rule_id, target in targets.items():
+        if target.kind == "identity":
+            for r in by_rule.get(rule_id, []):
+                r.update(target.ready or {})
+            continue
         pick = picks.get(rule_id) or {}
         valid = {code for code, _ in target.candidates}
         code = pick.get("code") if pick.get("code") in valid else None
@@ -134,6 +179,8 @@ def candidate_block(targets: dict[str, Target]) -> str:
     """Prompt lines listing the allowed choices per rule."""
     lines = []
     for rule_id, t in targets.items():
+        if t.hint:
+            lines.append(f"Help for {rule_id}: {t.hint}")
         if not t.candidates:
             continue
         what = "an SHA intervention code" if t.kind == "intervention" else "an ICD-11 code"
@@ -143,6 +190,8 @@ def candidate_block(targets: dict[str, Target]) -> str:
 
 
 def cache_suffix(target: Optional[Target]) -> str:
-    return "" if not target else "|" + ",".join(code for code, _ in target.candidates)
+    if not target:
+        return ""
+    return "|" + ",".join(code for code, _ in target.candidates) + "|" + (target.hint or "")
 
 
