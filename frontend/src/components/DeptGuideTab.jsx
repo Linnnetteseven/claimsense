@@ -6,7 +6,7 @@ export default function DeptGuideTab({ department }) {
 
   if (!guide) {
     return (
-      <div className="bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-850 rounded-2xl p-8 text-center shadow-sm">
+      <div className="bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-8 text-center shadow-sm">
         <p className="text-sm text-slate-500 dark:text-slate-400">
           No department set on this claim yet, so there&apos;s no SOP guide to show.
         </p>
@@ -15,8 +15,8 @@ export default function DeptGuideTab({ department }) {
   }
 
   return (
-    <div className="bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-850 rounded-2xl p-6 shadow-sm">
-      <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200 border-b border-slate-100 dark:border-slate-850 pb-3 mb-5">
+    <div className="bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-6 shadow-sm">
+      <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200 border-b border-slate-100 dark:border-slate-800 pb-3 mb-5">
         {guide.label} · claim creation checklist
       </h3>
       <div className="space-y-4">
@@ -28,7 +28,7 @@ export default function DeptGuideTab({ department }) {
             <div className="flex-1 flex items-center justify-between gap-3">
               <p className="text-sm text-slate-700 dark:text-slate-300">{step.title}</p>
               {step.required && (
-                <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400 dark:text-slate-500 border border-slate-200 dark:border-slate-800 rounded-full px-2 py-0.5 shrink-0">
+                <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-800 rounded-full px-2 py-0.5 shrink-0">
                   Required
                 </span>
               )}

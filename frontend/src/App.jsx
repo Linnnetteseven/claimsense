@@ -4,6 +4,7 @@ import ValidationPanel from "./components/ValidationPanel.jsx";
 import LandingPage from "./components/LandingPage.jsx";
 import AddClaimModal from "./components/AddClaimModal.jsx";
 import { useClaims } from "./hooks/useClaims.js";
+import { stageOf } from "./constants/stages.js";
 
 export default function App() {
   const { claims, loading, error, reload, patchClaim, addClaim, resetDemo } = useClaims();
@@ -24,6 +25,22 @@ export default function App() {
     }
     return false;
   });
+
+  // "/" jumps to the claim search, unless the officer is already typing somewhere.
+  useEffect(() => {
+    const onKey = (e) => {
+      const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName);
+      if (e.key === "/" && !typing && !e.ctrlKey && !e.metaKey) {
+        const search = document.getElementById("claim-search");
+        if (search) {
+          e.preventDefault();
+          search.focus();
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   useEffect(() => {
     if (darkMode) {
@@ -58,7 +75,7 @@ export default function App() {
     }
   }
 
-  const readyCount = claims.filter((c) => c._preview?.color === "green").length;
+  const readyCount = claims.filter((c) => (c._stage ?? stageOf(c)) === "ready").length;
 
   async function handleAddClaim(claimData) {
     const created = await addClaim(claimData);
@@ -120,7 +137,7 @@ export default function App() {
             <button
               type="button"
               onClick={() => setAddModalOpen(true)}
-              className="text-xs bg-[#00897B] hover:bg-teal-700 active:scale-95 transition-all text-white font-semibold rounded-lg px-2.5 py-2 shadow-sm whitespace-nowrap"
+              className="text-xs bg-[#00796B] hover:bg-teal-800 active:scale-95 transition-all text-white font-semibold rounded-lg px-2.5 py-2 shadow-sm whitespace-nowrap"
             >
               + Add
             </button>
@@ -130,7 +147,7 @@ export default function App() {
         {/* Search & Stats Header */}
         <div className="px-5 py-3 bg-slate-50/50 dark:bg-slate-900/50 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
           <div>
-            <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+            <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
               Claims Queue
             </p>
             {!loading && (
@@ -188,7 +205,7 @@ export default function App() {
 
         {/* Footer info */}
         <div className="px-5 py-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50/30 dark:bg-slate-900/30">
-          <p className="text-[10px] text-slate-400 dark:text-slate-500 font-medium">
+          <p className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">
             Hakiki Claims Portal
           </p>
         </div>

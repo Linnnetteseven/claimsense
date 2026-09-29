@@ -7,6 +7,7 @@ Routers (api/routers/):
               GET /claims/{id}/history, POST /claims/{id}/reset, POST /demo/reset
   validation  POST /claims/{id}/validate, POST /validate, GET /claims/{id}/audit, GET /audit/verify
   fhir        GET /claims/{id}/bundle, POST /claims/{id}/handoff (/submit alias), GET /claims/{id}/handoff
+  terminology GET /terminology/icd11?q=, GET /terminology/interventions?q=&level=
   ussd        POST /ussd
 
 Errors always have the shape {"error": {"code", "message", "details"}} (api/errors.py).
@@ -25,7 +26,7 @@ from fastapi import FastAPI  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
 from api import errors  # noqa: E402
-from api.routers import claims, fhir, health, ussd, validation  # noqa: E402
+from api.routers import claims, fhir, health, terminology, ussd, validation  # noqa: E402
 from config import config  # noqa: E402
 from validation.rules import RULESET_VERSION  # noqa: E402
 
@@ -72,5 +73,5 @@ app.add_middleware(
 )
 
 errors.install(app)
-for module in (health, claims, validation, fhir, ussd):
+for module in (health, claims, validation, fhir, terminology, ussd):
     app.include_router(module.router)

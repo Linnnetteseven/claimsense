@@ -25,7 +25,10 @@ class FakeRepository:
         return copy.deepcopy(row["claim_data"]) if row else None
 
     def list_claims(self):
-        return [copy.deepcopy(r["claim_data"]) for r in self.rows.values()]
+        return [{**copy.deepcopy(r["claim_data"]),
+                 **({"_status": r["status"]} if r.get("status") else {}),
+                 **({"_sha_state": r["sha_state"]} if r.get("sha_state") else {})}
+                for r in self.rows.values()]
 
     def insert_claims(self, claims):
         for c in claims:
@@ -62,6 +65,12 @@ class FakeRepository:
         self.handoffs.append({**row, "id": f"H-{len(self.handoffs) + 1}", "created_at": "now"})
         self.rows[row["claim_number"]]["status"] = "handed_off"
         return self.handoffs[-1]
+
+    def record_sha_response(self, number, state, response):
+        if not self.latest_handoff(number):
+            return False
+        self.rows[number]["sha_state"] = state
+        return True
 
     def latest_handoff(self, number):
         return next((h for h in reversed(self.handoffs) if h["claim_number"] == number), None)
@@ -280,3 +289,56 @@ def test_cors_only_allows_our_frontends(client, origin, allowed):
     resp = api.options("/claims", headers={"Origin": origin, "Access-Control-Request-Method": "POST"})
     assert (resp.headers.get("access-control-allow-origin") == origin) is allowed
     assert resp.headers.get("access-control-allow-credentials") is None
+
+
+def _claim_response(code):
+    return {"resourceType": "ClaimResponse", "extension": [{
+        "url": "https://nshr-uat.sha.go.ke/fhir/StructureDefinition/eclaim-state-extension",
+        "valueCodeableConcept": {"coding": [{"code": code}]}}]}
+
+
+def test_sha_response_is_recorded_after_handoff(client):
+    api, repo = client
+    assert api.post("/claims/SEED-1/sha-response", json=_claim_response("approved")).status_code == 409
+    _fix_seed(api)
+    api.post("/claims/SEED-1/handoff")
+    body = api.post("/claims/SEED-1/sha-response", json=_claim_response("sent-back")).json()
+    assert body["sha_state"]["state"] == "sent_back" and repo.rows["SEED-1"]["sha_state"]["action_needed"]
+
+
+def test_sha_response_must_be_a_claim_response(client):
+    api, _ = client
+    assert api.post("/claims/SEED-1/sha-response", json={"resourceType": "Bundle"}).json()["error"]["code"] == "not_a_claim_response"
+
+
+def test_terminology_search(client):
+    api, _ = client
+    assert api.get("/terminology/icd11?q=J18.9").json()[0]["code"] == "CA40.Z"
+    assert api.get("/terminology/interventions?q=SHA-12-001&level=3").json()[0]["code"] == "SHA-12-001"
+    assert api.get("/terminology/interventions?q=SHA-12-001&level=6").json() == []
+
+
+def test_list_reports_stages_and_filters(client):
+    api, _ = client
+    body = api.get("/claims?stage=todo").json()
+    assert body["stages"] == {"todo": 1, "ready": 0, "with_sha": 0, "closed": 0}
+    assert [c["_stage"] for c in body["claims"]] == ["todo"]
+    _fix_seed(api)
+    api.post("/claims/SEED-1/handoff")
+    assert api.get("/claims").json()["stages"]["with_sha"] == 1
+
+
+def test_reads_retry_once_on_connect_timeout():
+    import httpx
+    from repositories.claims import _read
+
+    class Query:
+        calls = 0
+
+        def execute(self):
+            Query.calls += 1
+            if Query.calls == 1:
+                raise httpx.ConnectTimeout("handshake timed out")
+            return "rows"
+
+    assert _read(Query()) == "rows" and Query.calls == 2

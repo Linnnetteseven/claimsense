@@ -1,9 +1,12 @@
+import { useState } from "react";
 import PropTypes from "prop-types";
 import { CheckIcon, ErrorIcon, WarnIcon } from "./icons.jsx";
 import { FIELD_INPUTS, PASS_STYLE, SEVERITY_STYLES } from "../constants/status.js";
+import { api } from "../api/client.js";
+import CodeSearchInput from "./CodeSearchInput.jsx";
 
 const INPUT_CLASS =
-  "w-full text-xs font-semibold border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2 bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all";
+  "w-full text-xs font-semibold border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2 bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-100 placeholder-slate-500 dark:placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-700 dark:focus:ring-teal-400 focus:border-transparent transition-all";
 
 const EMPTY_ITEM = {
   sequence: 1,
@@ -31,11 +34,25 @@ function FieldInput({ ruleId, field, value, onEdit, onSave }) {
     <div>
       <label
         htmlFor={id}
-        className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1"
+        className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1"
       >
         {label}
       </label>
-      {type === "select" ? (
+      {field === "diagnosis_code" ? (
+        <CodeSearchInput
+          id={id}
+          value={value ?? ""}
+          onChange={(text) => onEdit(field, text.toUpperCase())}
+          onPick={(o) => {
+            onEdit("diagnosis_code", o.code);
+            onEdit("diagnosis_description", o.title);
+          }}
+          search={api.searchIcd11}
+          placeholder="Type an ICD-11 code or words, e.g. pneumonia"
+          className={INPUT_CLASS}
+          onKeyDown={submitOnEnter(onSave)}
+        />
+      ) : type === "select" ? (
         <select id={id} value={value ?? ""} onChange={(e) => onEdit(field, e.target.value)} className={INPUT_CLASS}>
           <option value="">Select...</option>
           {options.map((opt) => (
@@ -66,7 +83,7 @@ FieldInput.propTypes = {
   onSave: PropTypes.func,
 };
 
-function ItemsEditor({ items, onEdit, onSave }) {
+function ItemsEditor({ items, level, onEdit, onSave }) {
   const rows = Array.isArray(items) ? items : [];
   const update = (index, key, raw) => {
     const numeric = key === "quantity" || key === "unit_price" || key === "sequence";
@@ -78,7 +95,7 @@ function ItemsEditor({ items, onEdit, onSave }) {
 
   return (
     <div>
-      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1">
+      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">
         Service items
       </p>
       <div className="space-y-2">
@@ -99,14 +116,22 @@ function ItemsEditor({ items, onEdit, onSave }) {
                   onKeyDown={onKeyDown}
                   className={`${INPUT_CLASS} col-span-2`}
                 />
-                <input
-                  aria-label={label("intervention code")}
-                  placeholder="SHA-12-001"
-                  value={item.service_code ?? ""}
-                  onChange={(e) => update(index, "service_code", e.target.value.toUpperCase())}
-                  onKeyDown={onKeyDown}
-                  className={`${INPUT_CLASS} col-span-4 font-mono ${item.service_code ? "" : "ring-2 ring-red-400"}`}
-                />
+                <div className="col-span-4">
+                  <CodeSearchInput
+                    ariaLabel={label("intervention code")}
+                    placeholder="Code or words"
+                    value={item.service_code ?? ""}
+                    onChange={(text) => update(index, "service_code", text.toUpperCase())}
+                    onPick={(o) =>
+                      onEdit("items", rows.map((it, i) => (i === index
+                        ? { ...it, service_code: o.code, description: it.description || o.title }
+                        : it)))
+                    }
+                    search={(q) => api.searchInterventions(q, level)}
+                    className={`${INPUT_CLASS} font-mono ${item.service_code ? "" : "ring-2 ring-red-500"}`}
+                    onKeyDown={onKeyDown}
+                  />
+                </div>
                 <input
                   aria-label={label("description")}
                   placeholder="Description"
@@ -119,7 +144,7 @@ function ItemsEditor({ items, onEdit, onSave }) {
                   type="button"
                   onClick={() => remove(index)}
                   aria-label={`Remove item ${index + 1}`}
-                  className="col-span-1 text-slate-400 hover:text-red-600 text-sm font-bold"
+                  className="col-span-1 text-slate-500 hover:text-red-600 text-sm font-bold"
                 >
                   ×
                 </button>
@@ -153,7 +178,7 @@ function ItemsEditor({ items, onEdit, onSave }) {
                   onChange={(e) => update(index, "service_start", e.target.value)}
                   className={`${INPUT_CLASS} col-span-3 ${item.service_start ? "" : "ring-2 ring-red-400"}`}
                 />
-                <span className="col-span-1 text-center text-[10px] text-slate-400">to</span>
+                <span className="col-span-1 text-center text-[10px] text-slate-500">to</span>
                 <input
                   aria-label={label("service end date")}
                   title="Service end"
@@ -180,11 +205,12 @@ function ItemsEditor({ items, onEdit, onSave }) {
 
 ItemsEditor.propTypes = {
   items: PropTypes.array,
+  level: PropTypes.string,
   onEdit: PropTypes.func.isRequired,
   onSave: PropTypes.func,
 };
 
-export default function ErrorCard({ result, explanation, fixSteps, claim, onEdit, onApplyFix, onSave, busy }) {
+export default function ErrorCard({ result, explanation, fixSteps, claim, onEdit, onApplyFix, onSave, onLocate, busy }) {
   const {
     passed,
     severity = "error",
@@ -200,7 +226,11 @@ export default function ErrorCard({ result, explanation, fixSteps, claim, onEdit
     suggestion_reason: suggestionReason,
     suggestion_note: suggestionNote,
     suggested_choices: suggestedChoices,
+    source_url: sourceUrl,
+    source_label: sourceLabel,
+    why,
   } = result;
+  const [showWhy, setShowWhy] = useState(false);
 
   const style = passed ? PASS_STYLE : SEVERITY_STYLES[severity] ?? SEVERITY_STYLES.error;
   const editableFields = (fields ?? (field ? [field] : [])).filter((f) => FIELD_INPUTS[f]);
@@ -237,12 +267,55 @@ export default function ErrorCard({ result, explanation, fixSteps, claim, onEdit
             >
               {ruleId}
             </span>
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
               {passed ? "Passed" : severity}
             </span>
           </div>
 
           <p className="mt-2 text-sm font-semibold text-slate-800 dark:text-slate-100">{message}</p>
+
+          {!passed && (onLocate || sourceUrl || sourceLabel) && (
+            <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[11px]">
+              {onLocate && editableFields.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => onLocate(editableFields[0])}
+                  className="font-semibold text-teal-800 dark:text-teal-300 hover:underline"
+                >
+                  Show in claim
+                </button>
+              )}
+              {(why || sourceLabel) && (
+                <button
+                  type="button"
+                  aria-expanded={showWhy}
+                  onClick={() => setShowWhy((v) => !v)}
+                  className="font-semibold text-teal-800 dark:text-teal-300 hover:underline"
+                >
+                  {showWhy ? "Hide why" : "Why SHA checks this"}
+                </button>
+              )}
+            </div>
+          )}
+
+          {!passed && showWhy && (
+            <div className="mt-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/60 p-3 text-xs leading-5 text-slate-700 dark:text-slate-200">
+              {why && <p>{why}</p>}
+              {sourceLabel && (
+                <p className="mt-1 text-[11px] text-slate-600 dark:text-slate-300">
+                  Source: {sourceLabel}
+                  {sourceUrl && (
+                    <>
+                      {" · "}
+                      <a href={sourceUrl} target="_blank" rel="noreferrer" className="font-semibold text-teal-800 dark:text-teal-300 underline">
+                        open
+                      </a>
+                    </>
+                  )}
+                </p>
+              )}
+            </div>
+          )}
 
           {!passed && advice && (
             <p className="mt-2 text-xs leading-5 text-slate-600 dark:text-slate-400">{advice}</p>
@@ -252,7 +325,7 @@ export default function ErrorCard({ result, explanation, fixSteps, claim, onEdit
             <div className="mt-3 rounded-lg border border-teal-200/70 dark:border-teal-900/50 bg-white/70 dark:bg-slate-950/40 p-3">
               <p className="text-[10px] font-bold uppercase tracking-wider text-teal-700 dark:text-teal-400">Choose one</p>
               {suggestionSource && (
-                <p className="mt-0.5 text-[10px] text-slate-400 dark:text-slate-500">{suggestionSource}</p>
+                <p className="mt-0.5 text-[10px] text-slate-500 dark:text-slate-400">{suggestionSource}</p>
               )}
               <div className="mt-2 flex flex-wrap gap-2">
                 {suggestedChoices.map((choice) => (
@@ -304,7 +377,7 @@ export default function ErrorCard({ result, explanation, fixSteps, claim, onEdit
                   <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">{suggestionReason}</p>
                 )}
                 {suggestionSource && (
-                  <p className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                  <p className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                     {suggestionSource}
                     {aiPicked ? " · check before applying" : ""}
                   </p>
@@ -314,7 +387,7 @@ export default function ErrorCard({ result, explanation, fixSteps, claim, onEdit
                 type="button"
                 disabled={busy}
                 onClick={() => onApplyFix(changes, `suggestion: ${suggestionSource || ruleId}`)}
-                className="shrink-0 rounded-lg bg-teal-600 hover:bg-teal-700 disabled:opacity-60 active:scale-95 text-white text-[11px] font-bold px-3 py-2 transition-all shadow-sm"
+                className="shrink-0 rounded-lg bg-teal-700 hover:bg-teal-800 disabled:opacity-60 active:scale-95 text-white text-[11px] font-bold px-3 py-2 transition-all shadow-sm"
               >
                 Apply fix
               </button>
@@ -325,7 +398,7 @@ export default function ErrorCard({ result, explanation, fixSteps, claim, onEdit
             <div className="mt-3 space-y-3">
               {editableFields.map((f) =>
                 f === "items" ? (
-                  <ItemsEditor key={f} items={claim?.items} onEdit={onEdit} onSave={onSave} />
+                  <ItemsEditor key={f} items={claim?.items} level={claim?.facility_level} onEdit={onEdit} onSave={onSave} />
                 ) : (
                   <FieldInput
                     key={f}
@@ -337,7 +410,7 @@ export default function ErrorCard({ result, explanation, fixSteps, claim, onEdit
                   />
                 )
               )}
-              <p className="text-[10px] leading-4 text-slate-400 dark:text-slate-500">
+              <p className="text-[10px] leading-4 text-slate-500 dark:text-slate-400">
                 Press Enter or &quot;Save &amp; re-validate&quot; to save the correction and re-check every rule.
               </p>
             </div>
@@ -363,6 +436,9 @@ ErrorCard.propTypes = {
     suggestion_source: PropTypes.string,
     suggestion_reason: PropTypes.string,
     suggestion_note: PropTypes.string,
+    source_url: PropTypes.string,
+    source_label: PropTypes.string,
+    why: PropTypes.string,
     suggested_choices: PropTypes.arrayOf(PropTypes.shape({ label: PropTypes.string, changes: PropTypes.object })),
   }).isRequired,
   explanation: PropTypes.string,
@@ -371,5 +447,6 @@ ErrorCard.propTypes = {
   onEdit: PropTypes.func,
   onApplyFix: PropTypes.func,
   onSave: PropTypes.func,
+  onLocate: PropTypes.func,
   busy: PropTypes.bool,
 };

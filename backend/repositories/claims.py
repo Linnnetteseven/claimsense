@@ -4,13 +4,23 @@ This module deliberately returns the pre-existing internal claim dictionaries.
 Validation and FHIR layers therefore remain independent of Supabase.
 """
 
+from datetime import datetime, timezone
 from typing import Any
 
+import httpx
 from supabase import Client, create_client
 from supabase.lib.client_options import SyncClientOptions
 
 from config import config
 from data.mock_claims import resolve_date_tokens
+
+
+def _read(query):
+    """Run a read query, retrying once if the connection times out (safe: reads change nothing)."""
+    try:
+        return query.execute()
+    except (httpx.ConnectTimeout, httpx.ConnectError):
+        return query.execute()
 
 
 class ClaimsRepository:
@@ -47,12 +57,14 @@ class ClaimsRepository:
         if row.get("status"):
             # Workflow status for the UI; validation ignores underscore fields.
             claim = {**claim, "_status": row["status"]}
+        if row.get("sha_state"):
+            claim = {**claim, "_sha_state": row["sha_state"]}
         return claim
 
     def list_claims(self) -> list[dict]:
-        response = self._client.table(self._TABLE).select("claim_data, status").order(
+        response = _read(self._client.table(self._TABLE).select("claim_data, status, sha_state").order(
             "claim_number"
-        ).execute()
+        ))
         return [claim for row in response.data or [] if (claim := self._claim_from_row(row))]
 
     def get_claim_by_id(self, claim_id: str) -> dict | None:
@@ -62,9 +74,9 @@ class ClaimsRepository:
         return self._claim_from_row((response.data or [None])[0])
 
     def get_claim_by_number(self, claim_number: str) -> dict | None:
-        response = self._client.table(self._TABLE).select("claim_data, status").eq(
+        response = _read(self._client.table(self._TABLE).select("claim_data, status, sha_state").eq(
             "claim_number", claim_number
-        ).limit(1).execute()
+        ).limit(1))
         return self._claim_from_row((response.data or [None])[0])
 
     def insert_claims(self, claims: list[dict]) -> list[dict]:
@@ -91,8 +103,9 @@ class ClaimsRepository:
         if claim.get("id") != claim_number:
             raise ValueError("Claim id must match the claim number being updated")
         claim = {k: v for k, v in claim.items() if not k.startswith("_")}
+        # A new edit starts a new cycle: SHA's previous answer no longer applies.
         response = self._client.table(self._TABLE).update(
-            {"claim_data": claim, "status": "draft"}
+            {"claim_data": claim, "status": "draft", "sha_state": None}
         ).eq("claim_number", claim_number).execute()
         return self._claim_from_row((response.data or [None])[0])
 
@@ -138,6 +151,17 @@ class ClaimsRepository:
             "claim_number", row["claim_number"]
         ).execute()
         return saved
+
+    def record_sha_response(self, claim_number: str, state: dict, claim_response: dict) -> bool:
+        """Attach SHA's answer to the latest hand-off and show its state on the claim."""
+        latest = self.latest_handoff(claim_number)
+        if latest is None:
+            return False
+        self._client.table(self._HANDOFFS).update(
+            {"sha_response": claim_response, "sha_response_at": datetime.now(timezone.utc).isoformat()}
+        ).eq("id", latest["id"]).execute()
+        self._client.table(self._TABLE).update({"sha_state": state}).eq("claim_number", claim_number).execute()
+        return True
 
     def latest_handoff(self, claim_number: str) -> dict | None:
         response = self._client.table(self._HANDOFFS).select("*").eq(

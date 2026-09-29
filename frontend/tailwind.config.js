@@ -20,7 +20,7 @@ export default {
         },
         hakiki: {
           blue: "#1565C0",
-          teal: "#00897B",
+          teal: "#00796B", // brand teal, one shade deeper for AA contrast with white text
           dark: "#263238",
           light: "#F5F7FA"
         },

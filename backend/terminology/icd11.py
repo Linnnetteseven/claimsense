@@ -174,6 +174,16 @@ def from_icd10(code: str) -> Optional[tuple[str, str]]:
     return mapping.get(code) or mapping.get(code.split(".")[0])
 
 
+def lookup_codes(query: str, limit: int = 10) -> list[tuple[str, str]]:
+    """For a search box: codes starting with the query first, then title word matches."""
+    q = str(query).strip().upper()
+    if not q:
+        return []
+    by_code = [(c, t) for c, t in sorted(_titles().items()) if c.startswith(q)][:limit]
+    seen = {c for c, _ in by_code}
+    return by_code + [(c, t) for c, t in search(query, limit) if c not in seen][: limit - len(by_code)]
+
+
 def search(text: str, limit: int = 8) -> list[tuple[str, str]]:
     """ICD-11 codes whose title shares the most words with text. A shortlist, not a coder."""
     words = {w for w in re.findall(r"[a-z]{4,}", str(text).lower())}

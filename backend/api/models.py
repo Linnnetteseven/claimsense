@@ -71,6 +71,7 @@ class ClaimList(BaseModel):
     page: int
     page_size: int
     total_pages: int
+    stages: dict[str, int] = {}
     claims: list[dict]
 
 

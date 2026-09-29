@@ -25,8 +25,14 @@ from typing import Callable, Optional
 from data.sha_tariffs import get_intervention
 from terminology import icd11
 
-AFYALINK = "https://afyalink.dha.go.ke/claim-integration"
-OCL_INTERVENTIONS = "https://ilm-hie.dha.go.ke/ocl/orgs/MOH-KENYA/ValueSet/KenyaSocialHealthAuthorityInterventions/"
+# Sources. The AfyaLink guide (https://afyalink.dha.go.ke/claim-integration) and the MOH OCL
+# catalogue do not open as readable pages for the public, so they are named, not linked.
+AFYALINK_LABEL = "AfyaLink claim integration guide (DHA)"
+OCL_LABEL = "SHA benefits catalogue (MOH OCL)"
+IG_BASE = "https://build.fhir.org/ig/IntelliSOFT-Consulting/Kenya-eClaims-FHIR-IG"
+IG_INTERVENTIONS = f"{IG_BASE}/CodeSystem-KenyaSocialHealthAuthorityInterventionCS.html"
+IG_CLAIM_SUBMISSION = f"{IG_BASE}/StructureDefinition-ke-eclaims-claimsubmission.html"
+WHO_ICD11_BROWSER = "https://icd.who.int/browse/2026-01/mms/en"
 
 
 @dataclass
@@ -49,9 +55,10 @@ class Rule:
     version: str
     severity: str             # "error" deducts 20 points, "warning" 10
     fields: tuple[str, ...]   # claim fields the officer edits to clear the rule
-    source_url: Optional[str]
+    source_url: Optional[str]   # only pages a person can open; None when the source is not public
     source_label: str
     check: Callable[[dict], Optional[Finding]]
+    why: str = ""               # what SHA requires and why, in plain words (shown in the UI)
 
 
 @dataclass
@@ -70,6 +77,7 @@ class RuleResult:
     source_label: str = ""
     suggested_changes: Optional[dict] = None
     suggestion_source: Optional[str] = None
+    why: str = ""
 
     def to_dict(self) -> dict:
         out = {
@@ -83,6 +91,7 @@ class RuleResult:
             "rule_version": self.rule_version,
             "source_url": self.source_url,
             "source_label": self.source_label,
+            "why": self.why,
         }
         if self.suggested_value is not None:
             out["suggested_value"] = self.suggested_value
@@ -101,6 +110,7 @@ def run_rule(rule: "Rule", claim: dict) -> RuleResult:
         return RuleResult(
             rule.id, True, rule.severity, None, "Check passed", "",
             rule_version=rule.version, source_url=rule.source_url, source_label=rule.source_label,
+            why=rule.why,
         )
     fields = finding.fields or list(rule.fields)
     return RuleResult(
@@ -108,7 +118,7 @@ def run_rule(rule: "Rule", claim: dict) -> RuleResult:
         finding.message, finding.suggestion, fields,
         finding.suggested_value, finding.suggested_label,
         rule.version, rule.source_url, rule.source_label,
-        finding.suggested_changes, finding.suggestion_source,
+        finding.suggested_changes, finding.suggestion_source, rule.why,
     )
 
 
@@ -657,52 +667,99 @@ def check_postop_notes(claim: dict) -> Optional[Finding]:
 _LOCAL = "Hakiki local check"
 _SOP = "Facility SOP (local)"
 
+def _rule(id, version, severity, fields, source_label, check, why, source_url=None):
+    return Rule(id, version, severity, fields, source_url, source_label, check, why)
+
+
 REGISTRY: list[Rule] = [
-    Rule("MISSING_FIELDS", "2", "error", ("patient_id", "facility_code", "visit_date", "diagnosis_code"),
-         AFYALINK, "AfyaLink: patient, facility and diagnosis are required", check_required_fields),
-    Rule("INVALID_ICD11", "1", "error", ("diagnosis_code",),
-         AFYALINK, "AfyaLink: ICD-11 is required on all claims", check_icd11),
-    Rule("VISIT_DATE", "1", "error", ("visit_date",), None, _LOCAL, check_visit_date),
-    Rule("EMPTY_ITEMS", "2", "error", ("items",),
-         AFYALINK, "AfyaLink: items need a SHA intervention code", check_items_present),
-    Rule("SHA_SERVICE_CODE_FORMAT", "1", "error", ("items",),
-         OCL_INTERVENTIONS, "MOH OCL: SHA intervention catalogue", check_service_code_format),
-    Rule("SERVICED_PERIOD_PRESENT", "1", "error", ("items",),
-         AFYALINK, "AfyaLink: each item needs servicedPeriod start and end", check_serviced_period_present),
-    Rule("SERVICED_PERIOD_IN_BILLABLE", "1", "error", ("items",),
-         AFYALINK, "AfyaLink: item dates within the billablePeriod", check_serviced_period_in_billable),
-    Rule("ITEM_SEQUENCE_VALID", "1", "error", ("items",),
-         AFYALINK, "AfyaLink: unique item sequence numbers", check_item_sequence),
-    Rule("TOTAL_EQUALS_NET_SUM", "1", "error", ("claimed_amount",),
-         AFYALINK, "AfyaLink: claim total equals the sum of item net", check_total_equals_net),
-    Rule("PHC_ZERO_TOTAL", "1", "error", ("claimed_amount",),
-         AFYALINK, "AfyaLink: PHC claims have a zero total", check_phc_zero_total),
-    Rule("FHIR_BUNDLE_VALID", "1", "error", ("practitioner_id", "practitioner_name"),
-         AFYALINK, "AfyaLink: bundle references resolve; care team names a Practitioner", check_fhir_bundle),
-    Rule("INTERVENTION_ELIGIBILITY", "1", "error", ("items",),
-         OCL_INTERVENTIONS, "MOH OCL: intervention sex and age limits", check_intervention_eligibility),
-    Rule("INTERVENTION_FACILITY_LEVEL", "1", "error", ("items", "facility_level"),
-         OCL_INTERVENTIONS, "MOH OCL: facility levels per intervention", check_facility_level),
-    Rule("COVERAGE_EXPIRED", "1", "error", ("coverage_end_date",), None, _LOCAL, check_coverage_active),
-    Rule("MISSING_PARTOGRAPH", "1", "error", ("partograph_id",), None, _SOP, check_partograph),
-    Rule("MISSING_POSTOP_NOTES", "1", "error", ("postop_notes_attached",), None, _SOP, check_postop_notes),
-    Rule("ITEM_QUANTITY_VALID", "1", "warning", ("items",), None, _LOCAL, check_quantity),
-    Rule("INTERVENTION_KNOWN", "1", "warning", ("items",),
-         OCL_INTERVENTIONS, "MOH OCL: active SHA intervention codes", check_intervention_known),
-    Rule("INTERVENTION_DIAGNOSIS_MATCH", "1", "warning", ("diagnosis_code", "items"),
-         OCL_INTERVENTIONS, "MOH OCL: diagnoses linked to each intervention", check_diagnosis_match),
-    Rule("INTERVENTION_ACCESS_POINT", "1", "warning", ("items",),
-         OCL_INTERVENTIONS, "MOH OCL: outpatient / inpatient interventions", check_access_point),
-    Rule("CAPITATION_PAYMENT", "1", "warning", ("fund", "items"),
-         OCL_INTERVENTIONS, "MOH OCL: payment mechanism per intervention", check_capitation_payment),
-    Rule("PREAUTH_REQUIRED", "2", "warning", ("preauth_ref",),
-         OCL_INTERVENTIONS, "MOH OCL: pre-authorization flags per intervention", check_preauth),
-    Rule("TARIFF_CEILING", "2", "warning", ("items",),
-         OCL_INTERVENTIONS, "MOH OCL: intervention tariffs by facility level", check_tariff_ceiling),
-    Rule("AMOUNT_HIGH", "1", "warning", ("claimed_amount",), None, _LOCAL, check_amount_reasonable),
-    Rule("IMPLAUSIBLE_FREQUENCY", "1", "warning", ("sessions_this_week",), None, _SOP, check_renal_frequency),
+    _rule("MISSING_FIELDS", "2", "error", ("patient_id", "facility_code", "visit_date", "diagnosis_code"),
+          AFYALINK_LABEL, check_required_fields,
+          "SHA identifies the patient by their SHA (client registry) number and the facility by its registry "
+          "code, and needs the visit date and diagnosis to decide the claim. A claim missing any of them "
+          "cannot be processed."),
+    _rule("INVALID_ICD11", "1", "error", ("diagnosis_code",),
+          f"{AFYALINK_LABEL}; codes from WHO ICD-11", check_icd11,
+          "SHA requires every diagnosis to be coded in ICD-11 and linked to the services billed. ICD-10 "
+          "codes, and codes that do not exist in WHO's ICD-11, are rejected.",
+          WHO_ICD11_BROWSER),
+    _rule("VISIT_DATE", "1", "error", ("visit_date",), _LOCAL, check_visit_date,
+          "Claims can only be made for care already given, so a visit date in the future is a typing "
+          "error. Hakiki catches it before SHA does."),
+    _rule("EMPTY_ITEMS", "2", "error", ("items",), AFYALINK_LABEL, check_items_present,
+          "SHA pays per intervention, so each line must name the SHA intervention it bills for. An item "
+          "without a code cannot be paid."),
+    _rule("SHA_SERVICE_CODE_FORMAT", "1", "error", ("items",),
+          "DHA eClaims FHIR guide: SHA intervention codes", check_service_code_format,
+          "SHA intervention codes look like SHA-12-001. Chapter codes such as SHA-12 only group services "
+          "and cannot be billed.",
+          IG_INTERVENTIONS),
+    _rule("SERVICED_PERIOD_PRESENT", "1", "error", ("items",), AFYALINK_LABEL, check_serviced_period_present,
+          "SHA needs the start and end date of every service. It uses them to check the claim period and "
+          "to count days for per-day payments."),
+    _rule("SERVICED_PERIOD_IN_BILLABLE", "1", "error", ("items",), AFYALINK_LABEL,
+          check_serviced_period_in_billable,
+          "Every service must fall inside the claim period, from admission (or visit) to discharge. SHA "
+          "compares dates only, not times, and rejects services outside the period."),
+    _rule("ITEM_SEQUENCE_VALID", "1", "error", ("items",), AFYALINK_LABEL, check_item_sequence,
+          "Each item needs its own sequence number: 1, 2, 3 and so on. SHA accepts the same intervention "
+          "more than once, but only with different sequence numbers."),
+    _rule("TOTAL_EQUALS_NET_SUM", "1", "error", ("claimed_amount",), AFYALINK_LABEL, check_total_equals_net,
+          "SHA checks that the claim total is exactly the sum of the item amounts. Any difference, even "
+          "from rounding, is rejected."),
+    _rule("PHC_ZERO_TOTAL", "1", "error", ("claimed_amount",), AFYALINK_LABEL, check_phc_zero_total,
+          "Primary health care is paid to the facility by capitation, a fixed amount per person, not per "
+          "visit. PHC claims record the services with a total of zero."),
+    _rule("FHIR_BUNDLE_VALID", "1", "error", ("practitioner_id", "practitioner_name"),
+          f"{AFYALINK_LABEL}; DHA eClaims FHIR guide", check_fhir_bundle,
+          "SHA receives the claim as a linked set of records: patient, cover, facility, practitioner and "
+          "claim. The care team must name a registered practitioner, and every link must point to a "
+          "record in the set.",
+          IG_CLAIM_SUBMISSION),
+    _rule("INTERVENTION_ELIGIBILITY", "1", "error", ("items",), OCL_LABEL, check_intervention_eligibility,
+          "SHA's catalogue limits some interventions by sex or age, for example deliveries to female "
+          "patients aged 10 and over. Claims outside those limits are rejected."),
+    _rule("INTERVENTION_FACILITY_LEVEL", "1", "error", ("items", "facility_level"), OCL_LABEL,
+          check_facility_level,
+          "SHA pays each intervention only at the facility levels in its catalogue; outpatient "
+          "consultation, for example, is paid at levels 2 to 4."),
+    _rule("COVERAGE_EXPIRED", "1", "error", ("coverage_end_date",), _LOCAL, check_coverage_active,
+          "SHA pays only for members whose cover was active on the day of care. Hakiki uses the cover "
+          "dates on the claim; confirm the member's status on the SHA portal."),
+    _rule("MISSING_PARTOGRAPH", "1", "error", ("partograph_id",), _SOP, check_partograph,
+          "The facility's procedure requires a partograph record for every delivery; it is the clinical "
+          "evidence SHA may ask for. This is a facility rule, not an SHA rule."),
+    _rule("MISSING_POSTOP_NOTES", "1", "error", ("postop_notes_attached",), _SOP, check_postop_notes,
+          "The facility's procedure requires post-operative notes for surgery with an overnight stay; SHA "
+          "may ask for the discharge summary. This is a facility rule, not an SHA rule."),
+    _rule("ITEM_QUANTITY_VALID", "1", "warning", ("items",), _LOCAL, check_quantity,
+          "An item with a quantity of zero or less bills nothing, which usually means a typing error."),
+    _rule("INTERVENTION_KNOWN", "1", "warning", ("items",), OCL_LABEL, check_intervention_known,
+          "The code is not an active intervention in SHA's catalogue. It may be retired, mistyped, or "
+          "newer than Hakiki's copy of the catalogue."),
+    _rule("INTERVENTION_DIAGNOSIS_MATCH", "1", "warning", ("diagnosis_code", "items"), OCL_LABEL,
+          check_diagnosis_match,
+          "SHA's catalogue lists the diagnoses each intervention covers. SHA's lists contain some typos, "
+          "so Hakiki warns rather than blocks."),
+    _rule("INTERVENTION_ACCESS_POINT", "1", "warning", ("items",), OCL_LABEL, check_access_point,
+          "SHA marks some interventions outpatient-only or inpatient-only. One billed in the other "
+          "setting will be queried."),
+    _rule("CAPITATION_PAYMENT", "1", "warning", ("fund", "items"), OCL_LABEL, check_capitation_payment,
+          "SHA pays this intervention by capitation, a fixed amount per person, not per claim. Priced on a "
+          "claim outside the PHC fund, it will not be reimbursed."),
+    _rule("PREAUTH_REQUIRED", "2", "warning", ("preauth_ref",), OCL_LABEL, check_preauth,
+          "SHA's catalogue flags interventions that need approval before the claim is sent, such as "
+          "surgery, imaging and dialysis. Without the pre-authorization reference SHA will not pay them."),
+    _rule("TARIFF_CEILING", "2", "warning", ("items",), OCL_LABEL, check_tariff_ceiling,
+          "SHA pays up to the tariff set for each intervention and facility level. Anything above it is "
+          "not reimbursed."),
+    _rule("AMOUNT_HIGH", "1", "warning", ("claimed_amount",), _LOCAL, check_amount_reasonable,
+          "Large claims are more likely to be reviewed by hand at SHA. Hakiki prompts you to attach "
+          "supporting documents; this is not an SHA limit."),
+    _rule("IMPLAUSIBLE_FREQUENCY", "1", "warning", ("sessions_this_week",), _SOP, check_renal_frequency,
+          "More than three dialysis sessions a week is unusual. A clinical note explains it so the extra "
+          "sessions are not queried. This is a facility rule."),
 ]
 
 RULES_BY_ID = {rule.id: rule for rule in REGISTRY}
 # Bump when any rule changes; returned with every validation result.
-RULESET_VERSION = "2026.09-v4"
+RULESET_VERSION = "2026.09-v5"

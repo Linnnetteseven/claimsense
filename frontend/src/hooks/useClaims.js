@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api/client.js";
+import { stageOf } from "../constants/stages.js";
 
 function toPreview(result) {
   return {
@@ -43,18 +44,22 @@ export function useClaims() {
     return result.claim;
   }, []);
 
-  // Replace one claim's data and/or score after a validation, correction or reset.
+  // Replace one claim's data and/or score after a validation, correction, hand-off or reset,
+  // and recompute its stage so it moves to the right queue view.
   const patchClaim = useCallback((claimId, { claim, validation } = {}) => {
     setClaims((prev) =>
-      prev.map((c) =>
-        c.id === claimId
-          ? {
-              ...c,
-              ...(claim ?? {}),
-              _preview: validation ? toPreview(validation) : c._preview,
-            }
-          : c
-      )
+      prev.map((c) => {
+        if (c.id !== claimId) return c;
+        const base = { ...c };
+        // A saved claim from the backend is the full record: SHA's old answer no longer applies.
+        if (claim && "id" in claim && !("_sha_state" in claim)) delete base._sha_state;
+        const next = {
+          ...base,
+          ...(claim ?? {}),
+          _preview: validation ? toPreview(validation) : c._preview,
+        };
+        return { ...next, _stage: stageOf(next) };
+      })
     );
   }, []);
 

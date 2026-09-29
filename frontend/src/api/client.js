@@ -47,6 +47,10 @@ export const api = {
   // Demo only: restore a claim, or every seeded claim, to its original state.
   resetClaim: (id) => request(`/claims/${id}/reset`, { method: "POST" }),
   resetDemo: () => request("/demo/reset", { method: "POST" }),
+  // Code search for the claim form.
+  searchIcd11: (q) => request(`/terminology/icd11?q=${encodeURIComponent(q)}&limit=8`),
+  searchInterventions: (q, level = "") =>
+    request(`/terminology/interventions?q=${encodeURIComponent(q)}&level=${encodeURIComponent(level)}&limit=8`),
   getClaimAudit: (id) => request(`/claims/${id}/audit`),
   verifyAuditChain: () => request(`/audit/verify`),
 };

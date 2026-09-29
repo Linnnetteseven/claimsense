@@ -10,6 +10,7 @@ from api.errors import ApiError
 from api.models import BundleResult, HandoffRequest, HandoffResult
 from config import config
 from fhir.builder import build_claim_response
+from fhir.claim_state import parse_claim_state
 from his import handoff as his_handoff
 from services.pipeline import bundle_with_checks
 from validation.engine import validate
@@ -82,6 +83,30 @@ def handoff_claim(claim_id: str, body: HandoffRequest | None = None):
         "delivery_response": delivery_response,
         "sha_bundle": sha_bundle["bundle"],
     }
+
+
+@router.post("/claims/{claim_id}/sha-response")
+def record_sha_response(claim_id: str, claim_response: dict) -> dict:
+    """
+    The HIS forwards SHA's FHIR ClaimResponse for a handed-off claim. Hakiki reads the
+    claim-state extension (AfyaLink or eClaims IG codes) and shows it on the claim.
+    """
+    if claim_response.get("resourceType") != "ClaimResponse":
+        raise ApiError(400, "Send the FHIR ClaimResponse SHA returned", "not_a_claim_response")
+    state = parse_claim_state(claim_response)
+    if state is None:
+        raise ApiError(400, "The ClaimResponse has no claim-state extension", "no_claim_state")
+    repository = claims_repository()
+    get_claim_or_404(claim_id, repository)
+    try:
+        recorded = repository.record_sha_response(claim_id, state, claim_response)
+    except Exception as exc:
+        logger.exception("Unable to record SHA response for %s", claim_id)
+        raise ApiError(502, "Unable to record the SHA response") from exc
+    if not recorded:
+        raise ApiError(409, f"Claim '{claim_id}' has not been handed off", "not_handed_off")
+    logger.info("SHA response for %s: %s", claim_id, state["state"])
+    return {"claim_id": claim_id, "sha_state": state}
 
 
 @router.get("/claims/{claim_id}/handoff")

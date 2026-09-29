@@ -40,7 +40,7 @@ export default function LandingPage({ claims, loading, onEnter, darkMode, onTogg
     <div className="h-screen w-full bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 overflow-y-auto font-sans antialiased selection:bg-teal-500/20 scroll-smooth">
       
       {/* --- MINIMAL STICKY NAVBAR --- */}
-      <nav className="w-full bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-850 sticky top-0 z-50">
+      <nav className="w-full bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 sticky top-0 z-50">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <img src="/favicon.png" alt="Hakiki" className="h-6 w-6 object-contain" />
@@ -99,7 +99,7 @@ export default function LandingPage({ claims, loading, onEnter, darkMode, onTogg
             Healthcare Claims Deserve <br className="hidden sm:block" />
             <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#1565C0] to-[#00897B] dark:from-blue-400 dark:to-teal-400">Intelligence, Not More Paperwork.</span>
           </h1>
-          <p className="text-slate-600 dark:text-slate-350 text-sm sm:text-base md:text-lg leading-relaxed font-medium max-w-2xl mx-auto">
+          <p className="text-slate-600 dark:text-slate-300 text-sm sm:text-base md:text-lg leading-relaxed font-medium max-w-2xl mx-auto">
             Hakiki pairs SHA claims officers with an AI co-pilot to instantly validate Social Health Authority data. We don&apos;t replace your expertise—we eliminate the friction so you can process claims faster and with absolute confidence.
           </p>
         </div>
@@ -117,7 +117,7 @@ export default function LandingPage({ claims, loading, onEnter, darkMode, onTogg
         </button>
 
         {/* Live Queue Snapshot Summary Card */}
-        <div className="w-full max-w-4xl bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-850 rounded-3xl p-6 sm:p-8 shadow-sm flex flex-col md:flex-row items-center justify-center gap-8 relative overflow-hidden mt-16 sm:mt-20 mb-8">
+        <div className="w-full max-w-4xl bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 rounded-3xl p-6 sm:p-8 shadow-sm flex flex-col md:flex-row items-center justify-center gap-8 relative overflow-hidden mt-16 sm:mt-20 mb-8">
           <div className="absolute top-0 left-0 w-1.5 h-full bg-gradient-to-b from-[#1565C0] to-[#00897B]"></div>
           {loading ? (
             <div className="py-8 flex items-center gap-3 text-slate-500 dark:text-slate-400 font-medium">
@@ -129,13 +129,13 @@ export default function LandingPage({ claims, loading, onEnter, darkMode, onTogg
           ) : (
             <>
               <div className="flex flex-col items-center shrink-0">
-                <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-2 text-center">Queue Health Score</span>
+                <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-2 text-center">Queue Health Score</span>
                 <ScoreGauge score={avgScore} />
               </div>
               <div className="border-t md:border-t-0 md:border-l border-slate-100 dark:border-slate-800 pt-5 md:pt-0 md:pl-8 flex-1 w-full">
-                <h3 className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-3.5 text-center md:text-left">Live Status Triage</h3>
+                <h3 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-3.5 text-center md:text-left">Live Status Triage</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  <div className="bg-slate-50 dark:bg-slate-900/60 border border-slate-100 dark:border-slate-850 p-4 rounded-2xl text-center md:text-left">
+                  <div className="bg-slate-50 dark:bg-slate-900/60 border border-slate-100 dark:border-slate-800 p-4 rounded-2xl text-center md:text-left">
                     <span className="text-[10px] text-slate-500 dark:text-slate-400 uppercase block font-bold mb-1">Total Claims</span>
                     <strong className="text-2xl sm:text-3xl font-black text-slate-800 dark:text-slate-200">{total}</strong>
                   </div>
@@ -166,14 +166,14 @@ export default function LandingPage({ claims, loading, onEnter, darkMode, onTogg
             {STEPS.map((step) => (
               <div 
                 key={step.n} 
-                className="group relative bg-white dark:bg-slate-950 p-6 sm:p-8 rounded-3xl shadow-sm hover:shadow-xl transition-all duration-500 text-left overflow-hidden border border-slate-200 dark:border-slate-850 hover:border-transparent dark:hover:border-transparent"
+                className="group relative bg-white dark:bg-slate-950 p-6 sm:p-8 rounded-3xl shadow-sm hover:shadow-xl transition-all duration-500 text-left overflow-hidden border border-slate-200 dark:border-slate-800 hover:border-transparent dark:hover:border-transparent"
               >
                 <div className="absolute inset-0 bg-gradient-to-br from-[#1565C0] to-[#00897B] opacity-0 group-hover:opacity-100 transition-opacity duration-500 -z-10"></div>
                 <div className="absolute inset-[2px] bg-white dark:bg-slate-950 rounded-[22px] z-0"></div>
                 
                 <div className="relative z-10 flex flex-col h-full">
                   <div className="flex items-center justify-between mb-6">
-                    <div className="h-12 w-12 rounded-xl bg-slate-50 dark:bg-slate-900 text-teal-600 dark:text-teal-400 flex items-center justify-center group-hover:scale-110 transition-transform duration-300 shrink-0">
+                    <div className="h-12 w-12 rounded-xl bg-slate-50 dark:bg-slate-900 text-teal-700 dark:text-teal-400 flex items-center justify-center group-hover:scale-110 transition-transform duration-300 shrink-0">
                       <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         {step.icon}
                       </svg>
@@ -202,7 +202,7 @@ export default function LandingPage({ claims, loading, onEnter, darkMode, onTogg
             </div>
             <div className="px-4">
               <div className="mx-auto h-16 w-16 bg-teal-50 dark:bg-teal-950/20 rounded-2xl flex items-center justify-center mb-6">
-                <svg className="w-8 h-8 text-teal-600 dark:text-teal-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+                <svg className="w-8 h-8 text-teal-700 dark:text-teal-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
               </div>
               <h3 className="text-base sm:text-lg font-bold text-slate-900 dark:text-slate-100 mb-3">Social Health Authority Native</h3>
               <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 font-medium leading-relaxed">Built from the ground up to integrate seamlessly with standard Social Health Authority FHIR structures. No complex implementation required.</p>
@@ -222,14 +222,14 @@ export default function LandingPage({ claims, loading, onEnter, darkMode, onTogg
       <div className="w-full bg-slate-900 py-16 sm:py-20 px-4 sm:px-6 text-center">
         <div className="max-w-3xl mx-auto">
           <h2 className="text-2xl sm:text-3xl font-extrabold text-white mb-4 sm:mb-6">Ready to empower your claims team?</h2>
-          <p className="text-sm sm:text-base text-slate-400 font-medium mb-8 sm:mb-10 px-4">Experience how Hakiki&apos;s AI validation engine can transform your Social Health Authority workflow today.</p>
+          <p className="text-sm sm:text-base text-slate-500 font-medium mb-8 sm:mb-10 px-4">Experience how Hakiki&apos;s AI validation engine can transform your Social Health Authority workflow today.</p>
           <button
             type="button"
             onClick={onEnter}
             className="group bg-white hover:bg-slate-100 text-slate-900 font-bold px-8 sm:px-10 py-3 sm:py-4 rounded-xl text-base sm:text-lg shadow-xl hover:shadow-2xl transition-all duration-300 flex items-center gap-3 mx-auto"
           >
             Start Validating Claims
-            <svg className="w-5 h-5 text-teal-600 transform group-hover:translate-x-1 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-5 h-5 text-teal-700 transform group-hover:translate-x-1 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M14 5l7 7m0 0l-7 7m7-7H3" />
             </svg>
           </button>

@@ -343,10 +343,15 @@ class TestFixMetadata:
     def test_advice_text_is_never_a_suggested_value(self):
         assert "suggested_value" not in check("INVALID_ICD11", _base_claim(diagnosis_code="ZZZ999")).to_dict()
 
-    def test_results_carry_source(self):
+    def test_results_carry_source_and_why(self):
         result = check("INVALID_ICD11", _base_claim(diagnosis_code="J18.9")).to_dict()
-        assert result["source_url"].startswith("https://afyalink.dha.go.ke")
-        assert result["rule_version"]
+        assert result["source_url"].startswith("https://icd.who.int/")
+        assert "ICD-11" in result["why"] and result["rule_version"]
+
+    def test_every_rule_explains_itself_and_links_only_to_open_pages(self):
+        for rule in REGISTRY:
+            assert len(rule.why) > 40, rule.id
+            assert rule.source_url is None or rule.source_url.startswith(("https://icd.who.int/", "https://build.fhir.org/")), rule.id
 
 
 class TestEngine:

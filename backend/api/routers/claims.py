@@ -11,6 +11,7 @@ from api.errors import ApiError
 from api.models import ClaimIn, ClaimList, ClaimWithPreview, CorrectionResult, History, ResetCounts
 from config import config
 from services.pipeline import full_pipeline, preview, record_run
+from services.stages import STAGES, claim_stage
 from suggest.identity import RepositoryLookups
 from validation.engine import validate
 
@@ -19,13 +20,15 @@ router = APIRouter(tags=["claims"])
 
 
 @router.get("/claims", response_model=ClaimList)
-def list_claims(q: str = "", status: str = "all", page: int = 1, page_size: int = 20):
+def list_claims(q: str = "", status: str = "all", stage: str = "all", page: int = 1, page_size: int = 20):
     """
-    Claims with pre-scores.
+    Claims with pre-scores and lifecycle stage.
       q          search patient name, claim ID or facility (case-insensitive)
-      status     all | ready | review | error
+      stage      all | todo | ready | with_sha | closed   (see services/stages.py)
+      status     all | ready | review | error   (score colour; older clients)
       page       1-based
       page_size  claims per page
+    Returns stage counts over all claims, before filtering.
     """
     try:
         claims = claims_repository().list_claims()
@@ -35,7 +38,13 @@ def list_claims(q: str = "", status: str = "all", page: int = 1, page_size: int 
         logger.exception("Unable to list claims")
         raise ApiError(502, "Unable to retrieve claims from the database") from exc
 
-    scored = [{**claim, "_preview": preview(validate(claim))} for claim in claims]
+    scored = []
+    for claim in claims:
+        p = preview(validate(claim))
+        scored.append({**claim, "_preview": p, "_stage": claim_stage(claim, p)})
+    counts = {s: sum(c["_stage"] == s for c in scored) for s in STAGES}
+    if stage in STAGES:
+        scored = [c for c in scored if c["_stage"] == stage]
     colors = {"ready": "green", "review": "amber", "error": "red"}
     if status in colors:
         scored = [c for c in scored if c["_preview"]["color"] == colors[status]]
@@ -56,6 +65,7 @@ def list_claims(q: str = "", status: str = "all", page: int = 1, page_size: int 
         "page": page,
         "page_size": page_size,
         "total_pages": max(1, -(-total // page_size)),
+        "stages": counts,
         "claims": scored[start:start + page_size],
     }
 
