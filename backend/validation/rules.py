@@ -8,6 +8,7 @@ reads REGISTRY; severity and metadata live here, not inside the checks.
 Claim fields used (internal claim shape, not FHIR):
   patient_id, facility_code, visit_date, diagnosis_code, coverage_end_date,
   claimed_amount, fund ("SHIF" | "PHC" | "ECCIF"), preauth_ref, facility_level ("2".."6"),
+  gender, dob, discharge_date,
   billable_start / billable_end (default: visit_date / discharge_date or visit_date),
   practitioner_id (PUID), practitioner_name,
   items[]: sequence, service_code, description, quantity, unit_price, net,
@@ -419,6 +420,129 @@ def check_tariff_ceiling(claim: dict) -> Optional[Finding]:
     )
 
 
+def _catalogued_items(claim: dict):
+    """(index, item, Intervention) for items whose code is in the SHA catalogue."""
+    for idx, item in enumerate(_items(claim), start=1):
+        info = get_intervention(item.get("service_code", ""))
+        if info:
+            yield idx, item, info
+
+
+def _age_on(dob, on) -> Optional[int]:
+    if not dob or not on:
+        return None
+    return on.year - dob.year - ((on.month, on.day) < (dob.month, dob.day))
+
+
+def check_intervention_known(claim: dict) -> Optional[Finding]:
+    unknown = [
+        f'{_describe(item, idx)}: "{item.get("service_code")}"'
+        for idx, item in enumerate(_items(claim), start=1)
+        if _BILLABLE_CODE.match(str(item.get("service_code", "")).strip().upper())
+        and not get_intervention(item.get("service_code", ""))
+    ]
+    if not unknown:
+        return None
+    return Finding(
+        f"Not an active code in the SHA intervention catalogue: {'; '.join(unknown)}",
+        "Check the code against the current SHA benefits list. Retired or inactive codes are rejected.",
+    )
+
+
+def check_intervention_eligibility(claim: dict) -> Optional[Finding]:
+    gender = {"F": "FEMALE", "M": "MALE"}.get(str(claim.get("gender", "")).strip().upper()[:1])
+    age = _age_on(_parse_date(claim.get("dob")), _parse_date(claim.get("visit_date")))
+    problems = []
+    for idx, item, info in _catalogued_items(claim):
+        if info.gender in ("FEMALE", "MALE") and gender and gender != info.gender:
+            problems.append(f"{info.code} ({info.description}) is for {info.gender.lower()} patients only")
+        if age is not None and info.min_age is not None and age < info.min_age:
+            problems.append(f"{info.code} ({info.description}) needs age {info.min_age}+, patient is {age}")
+        if age is not None and info.max_age is not None and age > info.max_age:
+            problems.append(f"{info.code} ({info.description}) is for ages up to {info.max_age}, patient is {age}")
+    if not problems:
+        return None
+    return Finding(
+        "; ".join(problems),
+        "SHA limits some interventions by sex and age. Check the patient details or the intervention code.",
+        fields=["gender", "dob", "items"],
+    )
+
+
+def check_facility_level(claim: dict) -> Optional[Finding]:
+    level = str(claim.get("facility_level") or "").strip()
+    if not level:
+        return None  # unknown level: nothing to check against
+    wrong = [
+        f"{info.code} ({info.description}) is billable at levels {', '.join(info.levels)}"
+        for _, _, info in _catalogued_items(claim)
+        if not info.allowed_at_level(level)
+    ]
+    if not wrong:
+        return None
+    return Finding(
+        f"Not billable at a level {level} facility: {'; '.join(wrong)}",
+        "SHA pays each intervention only at certain facility levels. Use the intervention for this level, "
+        "or correct the facility level.",
+        fields=["items", "facility_level"],
+    )
+
+
+def check_diagnosis_match(claim: dict) -> Optional[Finding]:
+    code = str(claim.get("diagnosis_code", "")).strip()
+    if not code or icd11.format_error(code):
+        return None  # reported by the diagnosis rules
+    unmatched = [
+        f"{info.code} ({info.description})"
+        for _, _, info in _catalogued_items(claim)
+        if info.diagnosis_matches(code) is False
+    ]
+    if not unmatched:
+        return None
+    return Finding(
+        f"Diagnosis {code} is not on SHA's list of diagnoses for: {'; '.join(unmatched)}",
+        "SHA links each intervention to the ICD-11 diagnoses it covers. Check the diagnosis is the one "
+        "that justifies the service. (SHA's lists have some typos, so this is a warning.)",
+        fields=["diagnosis_code", "items"],
+    )
+
+
+def check_access_point(claim: dict) -> Optional[Finding]:
+    from fhir.kenya_bundle_builder import claim_subtype  # avoid a circular import
+
+    setting = "IP" if claim_subtype(claim) == "inpatient" else "OP"
+    wrong = [
+        f"{info.code} ({info.description}) is {'inpatient' if info.access_point == 'IP' else 'outpatient'} only"
+        for _, _, info in _catalogued_items(claim)
+        if info.access_point in ("IP", "OP") and info.access_point != setting
+    ]
+    if not wrong:
+        return None
+    return Finding(
+        f"This is an {'inpatient' if setting == 'IP' else 'outpatient'} claim but {'; '.join(wrong)}",
+        "Check the claim period (admission and discharge dates) or use the intervention for this setting.",
+        fields=["items", "billable_start", "billable_end"],
+    )
+
+
+def check_capitation_payment(claim: dict) -> Optional[Finding]:
+    if str(claim.get("fund", "")).strip().upper() == "PHC":
+        return None  # PHC_ZERO_TOTAL covers capitated claims
+    priced = [
+        f"{info.code} ({info.description})"
+        for _, item, info in _catalogued_items(claim)
+        if info.payment_mechanism == "CAPITATION" and item_net(item) > 0
+    ]
+    if not priced:
+        return None
+    return Finding(
+        f"SHA pays these by capitation, not per claim: {'; '.join(priced)}",
+        "Capitated primary care is claimed on the PHC fund with a zero price. Change the fund to PHC "
+        "and set the price to 0, or use a fee-for-service intervention.",
+        fields=["fund", "items"],
+    )
+
+
 def check_coverage_active(claim: dict) -> Optional[Finding]:
     end_date = _parse_date(claim.get("coverage_end_date"))
     visit_date = _parse_date(claim.get("visit_date"))
@@ -527,10 +651,22 @@ REGISTRY: list[Rule] = [
          AFYALINK, "AfyaLink: PHC claims have a zero total", check_phc_zero_total),
     Rule("FHIR_BUNDLE_VALID", "1", "error", ("practitioner_id", "practitioner_name"),
          AFYALINK, "AfyaLink: bundle references resolve; care team names a Practitioner", check_fhir_bundle),
+    Rule("INTERVENTION_ELIGIBILITY", "1", "error", ("items",),
+         OCL_INTERVENTIONS, "MOH OCL: intervention sex and age limits", check_intervention_eligibility),
+    Rule("INTERVENTION_FACILITY_LEVEL", "1", "error", ("items", "facility_level"),
+         OCL_INTERVENTIONS, "MOH OCL: facility levels per intervention", check_facility_level),
     Rule("COVERAGE_EXPIRED", "1", "error", ("coverage_end_date",), None, _LOCAL, check_coverage_active),
     Rule("MISSING_PARTOGRAPH", "1", "error", ("partograph_id",), None, _SOP, check_partograph),
     Rule("MISSING_POSTOP_NOTES", "1", "error", ("postop_notes_attached",), None, _SOP, check_postop_notes),
     Rule("ITEM_QUANTITY_VALID", "1", "warning", ("items",), None, _LOCAL, check_quantity),
+    Rule("INTERVENTION_KNOWN", "1", "warning", ("items",),
+         OCL_INTERVENTIONS, "MOH OCL: active SHA intervention codes", check_intervention_known),
+    Rule("INTERVENTION_DIAGNOSIS_MATCH", "1", "warning", ("diagnosis_code", "items"),
+         OCL_INTERVENTIONS, "MOH OCL: diagnoses linked to each intervention", check_diagnosis_match),
+    Rule("INTERVENTION_ACCESS_POINT", "1", "warning", ("items",),
+         OCL_INTERVENTIONS, "MOH OCL: outpatient / inpatient interventions", check_access_point),
+    Rule("CAPITATION_PAYMENT", "1", "warning", ("fund", "items"),
+         OCL_INTERVENTIONS, "MOH OCL: payment mechanism per intervention", check_capitation_payment),
     Rule("PREAUTH_REQUIRED", "2", "warning", ("preauth_ref",),
          OCL_INTERVENTIONS, "MOH OCL: pre-authorization flags per intervention", check_preauth),
     Rule("TARIFF_CEILING", "2", "warning", ("items",),
@@ -541,4 +677,4 @@ REGISTRY: list[Rule] = [
 
 RULES_BY_ID = {rule.id: rule for rule in REGISTRY}
 # Bump when any rule changes; returned with every validation result.
-RULESET_VERSION = "2026.09-v3"
+RULESET_VERSION = "2026.09-v4"

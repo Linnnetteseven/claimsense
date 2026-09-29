@@ -26,15 +26,16 @@ const COUNT = Math.max(
   Number(process.env.DEMO_COUNT || 200)
 );
 
+// [name, code, SHA facility level]
 const facilities = [
-  ["Kerugoya Level 5 Referral Hospital", "KRG-L5"],
-  ["Kenyatta National Hospital", "KNH"],
-  ["Mama Lucy Kibaki Hospital", "MLKH"],
-  ["Nyeri County Referral Hospital", "NYR"],
-  ["Embu Level 5 Hospital", "EMB-L5"],
-  ["Kisumu County Referral Hospital", "KSM"],
-  ["Nakuru Level 5 Hospital", "NKR-L5"],
-  ["Machakos Level 5 Hospital", "MKS-L5"],
+  ["Kerugoya Level 5 Referral Hospital", "KRG-L5", "5"],
+  ["Kenyatta National Hospital", "KNH", "6"],
+  ["Mama Lucy Kibaki Hospital", "MLKH", "5"],
+  ["Nyeri County Referral Hospital", "NYR", "5"],
+  ["Embu Level 5 Hospital", "EMB-L5", "5"],
+  ["Kisumu County Referral Hospital", "KSM", "5"],
+  ["Githurai Health Centre", "GTH-HC", "3"],
+  ["Kangemi Dispensary", "KNG-DSP", "2"],
 ];
 
 const firstNames = [
@@ -86,17 +87,20 @@ const diagnoses = [
   { code: "5A11", description: "Type 2 diabetes mellitus" },
   { code: "1A07", description: "Typhoid fever" },
   { code: "DD91.1", description: "Functional constipation" },
-  { code: "GB61.Z", description: "Chronic kidney disease, stage unspecified" },
+  { code: "BA00", description: "Essential hypertension" },
 ];
 
 // SHA intervention codes from the MOH OCL catalogue (see backend/data/sha_interventions.csv).
-// Prices are demo values, not tariffs.
-const services = [
-  { service_code: "SHA-12-001", description: "Consultation", unit_price: 1200 },
-  { service_code: "SHA-12-002", description: "Laboratory investigations", unit_price: 850 },
-  { service_code: "SHA-12-004", description: "Prescription, drug administration and dispensing", unit_price: 1500 },
-  { service_code: "SHA-12-003", description: "Basic radiological examinations", unit_price: 2200 },
+// Level 2-3: capitated primary care, claimed on the PHC fund at zero price.
+const phcServices = [
+  { service_code: "SHA-12-001", description: "Consultation" },
+  { service_code: "SHA-12-002", description: "Laboratory investigations" },
+  { service_code: "SHA-12-004", description: "Prescription, drug administration and dispensing" },
 ];
+// Level 5-6: SHA-07-001 "Management of medical cases", per diem at the OCL level tariff.
+const PER_DIEM = { 5: 3920, 6: 4480 };
+// SHA-08-005 Vaginal Delivery has no OCL tariff; demo price only.
+const DELIVERY_PRICE = 10000;
 
 function pad(value, length = 3) {
   return String(value).padStart(length, "0");
@@ -111,116 +115,103 @@ function daysFromNow(days) {
   return `{{today+${days}d}}`;
 }
 
-function makeItems(index, serviceDay) {
-  const itemCount = 1 + (index % 3);
-
-  return Array.from({ length: itemCount }, (_, itemIndex) => {
-    const service = services[(index + itemIndex) % services.length];
-
-    return {
-      sequence: itemIndex + 1,
-      service_code: service.service_code,
-      description: service.description,
-      quantity: 1,
-      unit_price: service.unit_price,
-      service_start: serviceDay,
-      service_end: serviceDay,
-    };
-  });
+function item(sequence, code, description, quantity, unitPrice, start, end = start) {
+  return {
+    sequence,
+    service_code: code,
+    description,
+    quantity,
+    unit_price: unitPrice,
+    service_start: start,
+    service_end: end,
+  };
 }
 
 function makeClaim(index) {
   const first = firstNames[index % firstNames.length];
   const last = lastNames[(index * 3) % lastNames.length];
+  const [facilityName, facilityCode, facilityLevel] = facilities[index % facilities.length];
+  const primaryCare = Number(facilityLevel) <= 3;
+  let diagnosis = diagnoses[index % diagnoses.length];
+  // Deliveries happen at hospitals, not dispensaries.
+  if (primaryCare && diagnosis.department === "maternity") diagnosis = diagnoses[0];
+  const maternity = diagnosis.department === "maternity";
 
-  const [facilityName, facilityCode] =
-    facilities[index % facilities.length];
-
-  const diagnosis =
-    diagnoses[index % diagnoses.length];
-
-  const claimId =
-    `SHA-DEMO-${new Date().getFullYear()}-${pad(index + 1, 4)}`;
-
-  const patientId =
-    `SHA-PAT-${pad(index + 1, 6)}`;
-
-  const visitDaysAgo = index % 180;
-  const items = makeItems(index, daysAgo(visitDaysAgo));
-
-  const calculatedAmount = items.reduce(
-    (sum, item) =>
-      sum +
-      Number(item.unit_price) *
-        Number(item.quantity),
-    0
-  );
-
-  let visitDate = daysAgo(visitDaysAgo);
+  const claimId = `SHA-DEMO-${new Date().getFullYear()}-${pad(index + 1, 4)}`;
+  const admitDaysAgo = 3 + (index % 170);
+  let visitDate = daysAgo(admitDaysAgo);
+  let dischargeDate;
   let coverageEndDate = daysFromNow(30 + (index % 365));
-
-  let diagnosisCode = diagnosis.code;
-  let claimedAmount = calculatedAmount;
-
   let fund = "SHIF";
+  let items;
+
+  if (primaryCare) {
+    fund = "PHC";
+    const count = 1 + (index % 3);
+    items = phcServices.slice(0, count).map((s, i) => item(i + 1, s.service_code, s.description, 1, 0, visitDate));
+  } else if (maternity) {
+    dischargeDate = daysAgo(admitDaysAgo - 1);
+    items = [item(1, "SHA-08-005", "Vaginal delivery", 1, DELIVERY_PRICE, visitDate, dischargeDate)];
+  } else {
+    const days = 1 + (index % 4);
+    dischargeDate = daysAgo(admitDaysAgo - days);
+    items = [
+      item(1, "SHA-07-001", `Inpatient management of ${diagnosis.description.toLowerCase()} (per day)`,
+        days, PER_DIEM[facilityLevel], visitDate, dischargeDate),
+    ];
+  }
+
+  const calculatedAmount = items.reduce((sum, i) => sum + i.unit_price * i.quantity, 0);
+  let claimedAmount = calculatedAmount;
+  let diagnosisCode = diagnosis.code;
   let preauthRef;
 
-  // Deliberately create a realistic mixture of clean,
-  // warning and error claims for the demo. Even-numbered claims are clean;
-  // odd ones cycle through one defect pattern per rule family.
+  // Even-numbered claims are clean; odd ones cycle through one defect pattern per rule family.
   const pattern = index % 2 === 0 ? 0 : ((index - 1) / 2) % 12;
 
   if (pattern === 1) diagnosisCode = "ZZZ999";                   // INVALID_ICD11
   if (pattern === 2) diagnosisCode = "J18.9";                    // INVALID_ICD11 (ICD-10 entered)
-  if (pattern === 3) {                                           // VISIT_DATE + SERVICED_PERIOD_IN_BILLABLE
-    visitDate = daysFromNow(14);
-  }
-  if (pattern === 4) coverageEndDate = daysAgo(Math.max(0, visitDaysAgo) + 30); // COVERAGE_EXPIRED
+  if (pattern === 3) visitDate = daysFromNow(14);                // VISIT_DATE + period checks
+  if (pattern === 4) coverageEndDate = daysAgo(admitDaysAgo + 30); // COVERAGE_EXPIRED
   if (pattern === 5) claimedAmount = calculatedAmount + 1500;    // TOTAL_EQUALS_NET_SUM
   if (pattern === 6) items[0].service_code = "SHA-OPD-001";      // SHA_SERVICE_CODE_FORMAT
   if (pattern === 7) diagnosisCode = "";                         // MISSING_FIELDS
   if (pattern === 8) items[0].service_end = "";                  // SERVICED_PERIOD_PRESENT
   if (pattern === 9) {                                           // ITEM_SEQUENCE_VALID
     items.push({ ...items[0], sequence: 1 });
-    claimedAmount += items[0].unit_price;
+    claimedAmount += items[0].unit_price * items[0].quantity;
   }
-  if (pattern === 10) fund = "PHC";                              // PHC_ZERO_TOTAL
+  if (pattern === 10) fund = primaryCare ? "SHIF" : "PHC";       // PHC_ZERO_TOTAL / CAPITATION_PAYMENT
   if (pattern === 11) {                                          // PREAUTH_REQUIRED + TARIFF_CEILING
-    items.splice(0, items.length, {
-      sequence: 1,
-      service_code: "SHA-16-001",
-      description: "Haemodialysis session",
-      quantity: 1,
-      unit_price: 12000,
-      service_start: daysAgo(visitDaysAgo),
-      service_end: daysAgo(visitDaysAgo),
-    });
+    items.splice(0, items.length, item(1, "SHA-16-001", "Haemodialysis session", 1, 12000, visitDate));
+    dischargeDate = undefined;
     claimedAmount = 12000;
-    diagnosisCode = "GB61.5";
+    diagnosisCode = "QB95.Z";
+    fund = "SHIF";
     if (Math.floor(index / 24) % 2 === 1) preauthRef = `PA-${pad(index, 5)}`;
   }
+  const renal = diagnosisCode.startsWith("QB95");
 
   const dobYear = 1970 + (index % 40);
 
   return {
     id: claimId,
     patient_name: `${first} ${last}`,
-    patient_id: patientId,
-    dob: `${dobYear}-${pad((index % 12) + 1, 2)}-${pad(
-      (index % 27) + 1,
-      2
-    )}`,
-    gender: index % 2 === 0 ? "F" : "M",
+    patient_id: `SHA-PAT-${pad(index + 1, 6)}`,
+    dob: `${dobYear}-${pad((index % 12) + 1, 2)}-${pad((index % 27) + 1, 2)}`,
+    gender: maternity || index % 2 === 0 ? "F" : "M",
 
     facility_name: facilityName,
     facility_code: facilityCode,
+    facility_level: renal && Number(facilityLevel) < 3 ? "5" : facilityLevel,
 
     visit_date: visitDate,
+    ...(dischargeDate ? { discharge_date: dischargeDate } : {}),
 
     diagnosis_code: diagnosisCode,
-    diagnosis_description: diagnosisCode === "GB61.5" ? "Chronic kidney disease, stage 5" : diagnosis.description,
-    department: diagnosis.department ?? (diagnosisCode === "GB61.5" ? "renal" : "outpatient"),
-    ...(diagnosis.department === "maternity" ? { partograph_id: `PG-${pad(index + 1, 5)}` } : {}),
+    diagnosis_description: renal ? "Dependence on renal dialysis" : diagnosis.description,
+    department: renal ? "renal" : diagnosis.department ?? (primaryCare ? "outpatient" : "medical"),
+    ...(maternity ? { partograph_id: `PG-${pad(index + 1, 5)}` } : {}),
     fund,
     ...(preauthRef ? { preauth_ref: preauthRef } : {}),
     // Demo registry numbers, not real PUIDs.
@@ -229,11 +220,9 @@ function makeClaim(index) {
 
     coverage_start_date: "2025-01-01",
     coverage_end_date: coverageEndDate,
-
     scheme_code: "SHA-2025",
 
     items,
-
     claimed_amount: claimedAmount,
   };
 }

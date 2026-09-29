@@ -71,12 +71,14 @@ def test_codings_use_terminology_base(monkeypatch):
     item = claim["item"][0]
     assert item["productOrService"]["coding"][0]["system"].endswith("/CodeSystem/KenyaSocialHealthAuthorityInterventionCS")
     assert item["category"]["coding"][0]["code"] == "1"
-    assert item["servicedPeriod"]["start"] and item["net"]["value"] == 1500
+    assert item["productOrService"]["coding"][0]["display"] == "Management of medical cases"  # SHA's name
+    assert item["productOrService"]["text"] == "Inpatient management of pneumonia (per day)"
+    assert item["servicedPeriod"]["start"] < item["servicedPeriod"]["end"] and item["net"]["value"] == 13440
     assert claim["meta"]["profile"][0] == "https://example.test/fhir/StructureDefinition/ke-eclaims-claimsubmission"
 
 
 def test_inpatient_subtype_for_multi_day_stay():
-    claim = _resource(build_kenya_eclaims_bundle(_demo("SHA-CLM-2026-003")), "Claim")
+    claim = _resource(build_kenya_eclaims_bundle(_demo("SHA-CLM-2026-001")), "Claim")
     assert claim["subType"]["coding"][0]["code"] == "inpatient"
     assert claim["billablePeriod"]["start"] < claim["billablePeriod"]["end"]
 

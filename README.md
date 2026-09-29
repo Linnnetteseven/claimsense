@@ -230,10 +230,16 @@ Claims are scored by deterministic rules defined in a registry in `backend/valid
 | `TOTAL_EQUALS_NET_SUM` | Claim total equals the sum of item net amounts exactly | 🔴 Error | [AfyaLink guide][afyalink] |
 | `PHC_ZERO_TOTAL` | Primary Health Care fund claims have a zero total | 🔴 Error | [AfyaLink guide][afyalink] |
 | `FHIR_BUNDLE_VALID` | The generated SHA bundle is sound: every reference resolves, care team names a Practitioner (PUID) | 🔴 Error | [AfyaLink guide][afyalink] |
+| `INTERVENTION_ELIGIBILITY` | Patient sex and age fit the intervention's limits | 🔴 Error | [MOH OCL][ocl-interventions] |
+| `INTERVENTION_FACILITY_LEVEL` | Intervention is billable at the facility's level (when the level is known) | 🔴 Error | [MOH OCL][ocl-interventions] |
 | `COVERAGE_EXPIRED` | Cover had not expired on the visit date | 🔴 Error | Local check |
 | `MISSING_PARTOGRAPH` | Maternity claims link a partograph record | 🔴 Error | Facility SOP |
 | `MISSING_POSTOP_NOTES` | Surgical overnight stays have post-op notes | 🔴 Error | Facility SOP |
 | `ITEM_QUANTITY_VALID` | Item quantities are positive | 🟡 Warning | Local check |
+| `INTERVENTION_KNOWN` | Item code is active in the SHA intervention catalogue | 🟡 Warning | [MOH OCL][ocl-interventions] |
+| `INTERVENTION_DIAGNOSIS_MATCH` | Diagnosis is on SHA's list for the intervention (OCL lists have typos, so a warning) | 🟡 Warning | [MOH OCL][ocl-interventions] |
+| `INTERVENTION_ACCESS_POINT` | Inpatient-only / outpatient-only interventions match the claim setting | 🟡 Warning | [MOH OCL][ocl-interventions] |
+| `CAPITATION_PAYMENT` | Capitated primary-care interventions are not priced on a non-PHC claim | 🟡 Warning | [MOH OCL][ocl-interventions] |
 | `PREAUTH_REQUIRED` | Services flagged for pre-authorization have a reference | 🟡 Warning | [MOH OCL][ocl-interventions] |
 | `TARIFF_CEILING` | Unit price not above the tariff for that code and facility level | 🟡 Warning | [MOH OCL][ocl-interventions] |
 | `AMOUNT_HIGH` | Claim total under the review threshold (maternity higher) | 🟡 Warning | Local check |

@@ -20,9 +20,10 @@ TWO_DAYS_AGO = str(date.today() - timedelta(days=2))
 TOMORROW = str(date.today() + timedelta(days=1))
 
 
-def _item(seq=1, code="SHA-12-001", price=1500, qty=1, start=YESTERDAY, end=None, **extra) -> dict:
+def _item(seq=1, code="SHA-02-002", price=1500, qty=1, start=YESTERDAY, end=None, **extra) -> dict:
+    # SHA-02-002 Crutches: fee for service, OP and IP, levels 4-6, no diagnosis or age limits.
     return {
-        "sequence": seq, "service_code": code, "description": "Consultation",
+        "sequence": seq, "service_code": code, "description": "Crutches",
         "quantity": qty, "unit_price": price, "service_start": start,
         "service_end": end if end is not None else start, **extra,
     }
@@ -36,8 +37,11 @@ def _base_claim(**overrides) -> dict:
         "facility_code": "FAC-001",
         "facility_name": "Test Hospital",
         "visit_date": YESTERDAY,
-        "diagnosis_code": "CA40.Z",
-        "diagnosis_description": "Pneumonia, organism unspecified",
+        "diagnosis_code": "NC72.5",
+        "diagnosis_description": "Fracture of shaft of femur",
+        "gender": "F",
+        "dob": "1990-01-01",
+        "facility_level": "5",
         "coverage_start_date": "2024-01-01",
         "coverage_end_date": "2099-01-01",
         "fund": "SHIF",
@@ -275,6 +279,61 @@ class TestFhirBundleRule:
     def test_total_mismatch_is_not_double_counted(self):
         # TOTAL_EQUALS_NET_SUM reports this; the bundle rule skips it.
         assert check("FHIR_BUNDLE_VALID", _base_claim(claimed_amount=1)).passed
+
+
+class TestOclRules:
+    """Rules driven by the MOH OCL intervention catalogue (data/sha_interventions.csv)."""
+
+    def test_unknown_code_warns(self):
+        # SHA-12-015 (Diabetes) is inactive in OCL.
+        assert not check("INTERVENTION_KNOWN", _base_claim(items=[_item(code="SHA-12-015")])).passed
+        assert check("INTERVENTION_KNOWN", _base_claim()).passed
+
+    def test_female_only_intervention(self):
+        # SHA-08-005 Vaginal Delivery: FEMALE, ages 10-100.
+        claim = _base_claim(diagnosis_code="JB20.Z", items=[_item(code="SHA-08-005")])
+        assert check("INTERVENTION_ELIGIBILITY", claim).passed
+        assert not check("INTERVENTION_ELIGIBILITY", {**claim, "gender": "M"}).passed
+
+    def test_age_limit(self):
+        claim = _base_claim(dob=str(date.today().replace(year=date.today().year - 8)),
+                            items=[_item(code="SHA-08-005")])
+        assert "needs age 10+" in check("INTERVENTION_ELIGIBILITY", claim).message
+
+    def test_facility_level(self):
+        # SHA-12-001 Consultation is levels 2-4 only.
+        claim = _base_claim(items=[_item(code="SHA-12-001")])
+        assert not check("INTERVENTION_FACILITY_LEVEL", {**claim, "facility_level": "6"}).passed
+        assert check("INTERVENTION_FACILITY_LEVEL", {**claim, "facility_level": "3"}).passed
+        assert check("INTERVENTION_FACILITY_LEVEL", {**claim, "facility_level": ""}).passed  # unknown
+
+    def test_sub_levels_match(self):
+        # SHA-10-001 lists 4A/4B/4C as well as 4.
+        assert check("INTERVENTION_FACILITY_LEVEL", _base_claim(items=[_item(code="SHA-10-001")], facility_level="4")).passed
+
+    def test_diagnosis_match(self):
+        dialysis = [_item(code="SHA-16-001")]
+        assert not check("INTERVENTION_DIAGNOSIS_MATCH", _base_claim(diagnosis_code="GB61.5", items=dialysis)).passed
+        assert check("INTERVENTION_DIAGNOSIS_MATCH", _base_claim(diagnosis_code="QB95.1", items=dialysis)).passed
+
+    def test_diagnosis_list_typos_are_tolerated(self):
+        # OCL lists "JBOA" for SHA-08-005; ICD-11 has no letter O, so it is read as JB0A.
+        claim = _base_claim(diagnosis_code="JB0A", items=[_item(code="SHA-08-005")])
+        assert check("INTERVENTION_DIAGNOSIS_MATCH", claim).passed
+
+    def test_access_point(self):
+        # SHA-19-119 Appendicectomy is inpatient only; a single-day claim is outpatient.
+        claim = _base_claim(items=[_item(code="SHA-19-119")])
+        assert not check("INTERVENTION_ACCESS_POINT", claim).passed
+        inpatient = _base_claim(visit_date=TWO_DAYS_AGO, discharge_date=YESTERDAY,
+                                items=[_item(code="SHA-19-119", start=TWO_DAYS_AGO, end=YESTERDAY)])
+        assert check("INTERVENTION_ACCESS_POINT", inpatient).passed
+
+    def test_capitation_payment(self):
+        priced = _base_claim(items=[_item(code="SHA-12-001")])
+        assert not check("CAPITATION_PAYMENT", priced).passed
+        assert check("CAPITATION_PAYMENT", {**priced, "fund": "PHC"}).passed
+        assert check("CAPITATION_PAYMENT", _base_claim(items=[_item(code="SHA-12-001", price=0)], claimed_amount=0)).passed
 
 
 class TestFixMetadata:
