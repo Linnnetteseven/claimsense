@@ -14,7 +14,7 @@ Status thresholds:
 """
 
 from typing import List
-from .rules import ALL_RULES, RuleResult
+from .rules import REGISTRY, RULESET_VERSION, RuleResult, run_rule
 
 
 _DEDUCTIONS = {"error": 20, "warning": 10}
@@ -50,7 +50,7 @@ def validate(claim: dict) -> dict:
     Run all rules against a claim. Returns everything the API and frontend need.
     This is the only function the rest of the app calls.
     """
-    results = [rule(claim) for rule in ALL_RULES]
+    results = [run_rule(rule, claim) for rule in REGISTRY]
     score = _compute_score(results)
 
     errors = [r for r in results if not r.passed and r.severity == "error"]
@@ -58,6 +58,7 @@ def validate(claim: dict) -> dict:
 
     return {
         "claim_id": claim.get("id"),
+        "ruleset_version": RULESET_VERSION,
         "score": score,
         "status": _score_to_status(score),
         "color": _score_to_color(score),

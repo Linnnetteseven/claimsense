@@ -68,7 +68,7 @@ def explain_errors(errors: list[dict], claim: dict) -> tuple[dict[str, str], boo
     prompt = f"""You are ClaimSense, helping hospital claims officers at SHA Kenya fix insurance claims.
 
 Explain each validation failure below in simple, direct language a non-technical hospital clerk can act on.
-No jargon. No FHIR, ICD-10 subcode, adjudication. Write as if speaking to someone at a hospital reception desk.
+No jargon. No FHIR, ICD-11 postcoordination, adjudication. Write as if speaking to someone at a hospital reception desk.
 
 Claim context:
 {context}

@@ -4,14 +4,17 @@ import { seedRow } from "./demo-data.js";
 const url = process.env.SUPABASE_URL;
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-if (!url || !serviceRoleKey) {
+// DEMO_DRY_RUN=1 prints the generated rows as JSON instead of writing them.
+const dryRun = Boolean(process.env.DEMO_DRY_RUN);
+
+if (!dryRun && (!url || !serviceRoleKey)) {
   console.error(
     "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY."
   );
   process.exit(1);
 }
 
-const supabase = createClient(url, serviceRoleKey, {
+const supabase = dryRun ? null : createClient(url, serviceRoleKey, {
   auth: {
     autoRefreshToken: false,
     persistSession: false,
@@ -75,65 +78,24 @@ const lastNames = [
   "Wambui",
 ];
 
+// ICD-11 MMS codes (checked against the WHO ICD-11 browser / findacode, Sep 2026).
 const diagnoses = [
-  {
-    code: "A09",
-    description: "Diarrhoea and gastroenteritis of infectious origin",
-    amount: 3500,
-  },
-  {
-    code: "J18.9",
-    description: "Pneumonia, unspecified organism",
-    amount: 6750,
-  },
-  {
-    code: "O80",
-    description: "Encounter for full-term uncomplicated delivery",
-    amount: 16400,
-  },
-  {
-    code: "I10",
-    description: "Essential primary hypertension",
-    amount: 4200,
-  },
-  {
-    code: "E11.9",
-    description: "Type 2 diabetes mellitus without complications",
-    amount: 4800,
-  },
-  {
-    code: "K30",
-    description: "Functional dyspepsia",
-    amount: 3000,
-  },
-  {
-    code: "N39.0",
-    description: "Urinary tract infection, site not specified",
-    amount: 3900,
-  },
+  { code: "1A40", description: "Gastroenteritis or colitis without specification of infectious agent" },
+  { code: "CA40.Z", description: "Pneumonia, organism unspecified" },
+  { code: "JB20.Z", description: "Single spontaneous delivery, unspecified", department: "maternity" },
+  { code: "5A11", description: "Type 2 diabetes mellitus" },
+  { code: "1A07", description: "Typhoid fever" },
+  { code: "DD91.1", description: "Functional constipation" },
+  { code: "GB61.Z", description: "Chronic kidney disease, stage unspecified" },
 ];
 
+// SHA intervention codes from the DHA eClaims IG (see backend/data/sha_tariffs_sample.csv).
+// Prices are demo values, not tariffs.
 const services = [
-  {
-    service_code: "SHA-OPD-001",
-    description: "Outpatient consultation",
-    unit_price: 1200,
-  },
-  {
-    service_code: "SHA-LAB-001",
-    description: "Laboratory investigation",
-    unit_price: 850,
-  },
-  {
-    service_code: "SHA-MED-001",
-    description: "Prescribed medication",
-    unit_price: 1500,
-  },
-  {
-    service_code: "SHA-RAD-001",
-    description: "Diagnostic imaging",
-    unit_price: 2200,
-  },
+  { service_code: "SHA-12-001", description: "Consultation", unit_price: 1200 },
+  { service_code: "SHA-12-002", description: "Laboratory investigations", unit_price: 850 },
+  { service_code: "SHA-12-004", description: "Prescription, drug administration and dispensing", unit_price: 1500 },
+  { service_code: "SHA-12-003", description: "Basic radiological examinations", unit_price: 2200 },
 ];
 
 function pad(value, length = 3) {
@@ -149,17 +111,20 @@ function daysFromNow(days) {
   return `{{today+${days}d}}`;
 }
 
-function makeItems(diagnosis, index) {
+function makeItems(index, serviceDay) {
   const itemCount = 1 + (index % 3);
 
   return Array.from({ length: itemCount }, (_, itemIndex) => {
     const service = services[(index + itemIndex) % services.length];
 
     return {
+      sequence: itemIndex + 1,
       service_code: service.service_code,
       description: service.description,
       quantity: 1,
       unit_price: service.unit_price,
+      service_start: serviceDay,
+      service_end: serviceDay,
     };
   });
 }
@@ -180,7 +145,8 @@ function makeClaim(index) {
   const patientId =
     `SHA-PAT-${pad(index + 1, 6)}`;
 
-  const items = makeItems(diagnosis, index);
+  const visitDaysAgo = index % 180;
+  const items = makeItems(index, daysAgo(visitDaysAgo));
 
   const calculatedAmount = items.reduce(
     (sum, item) =>
@@ -190,52 +156,48 @@ function makeClaim(index) {
     0
   );
 
-  let visitDate = daysAgo(index % 180);
+  let visitDate = daysAgo(visitDaysAgo);
   let coverageEndDate = daysFromNow(30 + (index % 365));
 
   let diagnosisCode = diagnosis.code;
   let claimedAmount = calculatedAmount;
 
+  let fund = "SHIF";
+  let preauthRef;
+
   // Deliberately create a realistic mixture of clean,
-  // warning and error claims for the demo.
+  // warning and error claims for the demo. Even-numbered claims are clean;
+  // odd ones cycle through one defect pattern per rule family.
+  const pattern = index % 2 === 0 ? 0 : ((index - 1) / 2) % 12;
 
-  const pattern = index % 10;
-
-  if (pattern === 1) {
-    diagnosisCode = "ZZZ999";
-  }
-
-  if (pattern === 2) {
-    visitDate = daysFromNow(30);
-  }
-
-  if (pattern === 3) {
-    coverageEndDate = daysAgo(60);
-  }
-
-  if (pattern === 4) {
-    claimedAmount = calculatedAmount + 1500;
-  }
-
-  if (pattern === 5) {
-    items[0].service_code = "";
-  }
-
-  if (pattern === 6) {
-    claimedAmount = 15000;
-  }
-
-  if (pattern === 7) {
-    diagnosisCode = "";
-  }
-
-  if (pattern === 8) {
+  if (pattern === 1) diagnosisCode = "ZZZ999";                   // INVALID_ICD11
+  if (pattern === 2) diagnosisCode = "J18.9";                    // INVALID_ICD11 (ICD-10 entered)
+  if (pattern === 3) {                                           // VISIT_DATE + SERVICED_PERIOD_IN_BILLABLE
     visitDate = daysFromNow(14);
-    coverageEndDate = daysAgo(30);
   }
-
-  if (pattern === 9) {
-    claimedAmount = Math.round(calculatedAmount * 1.08);
+  if (pattern === 4) coverageEndDate = daysAgo(Math.max(0, visitDaysAgo) + 30); // COVERAGE_EXPIRED
+  if (pattern === 5) claimedAmount = calculatedAmount + 1500;    // TOTAL_EQUALS_NET_SUM
+  if (pattern === 6) items[0].service_code = "SHA-OPD-001";      // SHA_SERVICE_CODE_FORMAT
+  if (pattern === 7) diagnosisCode = "";                         // MISSING_FIELDS
+  if (pattern === 8) items[0].service_end = "";                  // SERVICED_PERIOD_PRESENT
+  if (pattern === 9) {                                           // ITEM_SEQUENCE_VALID
+    items.push({ ...items[0], sequence: 1 });
+    claimedAmount += items[0].unit_price;
+  }
+  if (pattern === 10) fund = "PHC";                              // PHC_ZERO_TOTAL
+  if (pattern === 11) {                                          // PREAUTH_REQUIRED + TARIFF_CEILING
+    items.splice(0, items.length, {
+      sequence: 1,
+      service_code: "SHA-16-001",
+      description: "Haemodialysis session",
+      quantity: 1,
+      unit_price: 12000,
+      service_start: daysAgo(visitDaysAgo),
+      service_end: daysAgo(visitDaysAgo),
+    });
+    claimedAmount = 12000;
+    diagnosisCode = "GB61.5";
+    if (Math.floor(index / 24) % 2 === 1) preauthRef = `PA-${pad(index, 5)}`;
   }
 
   const dobYear = 1970 + (index % 40);
@@ -256,7 +218,11 @@ function makeClaim(index) {
     visit_date: visitDate,
 
     diagnosis_code: diagnosisCode,
-    diagnosis_description: diagnosis.description,
+    diagnosis_description: diagnosisCode === "GB61.5" ? "Chronic kidney disease, stage 5" : diagnosis.description,
+    department: diagnosis.department ?? (diagnosisCode === "GB61.5" ? "renal" : "outpatient"),
+    ...(diagnosis.department === "maternity" ? { partograph_id: `PG-${pad(index + 1, 5)}` } : {}),
+    fund,
+    ...(preauthRef ? { preauth_ref: preauthRef } : {}),
 
     coverage_start_date: "2025-01-01",
     coverage_end_date: coverageEndDate,
@@ -275,6 +241,11 @@ const claims = Array.from(
 );
 
 const rows = claims.map(seedRow);
+
+if (dryRun) {
+  console.log(JSON.stringify(rows));
+  process.exit(0);
+}
 
 console.log(`Preparing ${rows.length} demo claims...`);
 

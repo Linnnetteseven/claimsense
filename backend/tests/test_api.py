@@ -57,14 +57,14 @@ def client(monkeypatch):
 
 def test_correct_persists_and_revalidates_whole_claim(client):
     api, repo = client
-    body = api.post("/claims/SEED-1/correct", json={"diagnosis_code": "J18.9"}).json()
+    body = api.post("/claims/SEED-1/correct", json={"diagnosis_code": "CA40.Z"}).json()
     assert body["validation"]["error_count"] == 0
-    assert repo.rows["SEED-1"]["claim_data"]["diagnosis_code"] == "J18.9"
+    assert repo.rows["SEED-1"]["claim_data"]["diagnosis_code"] == "CA40.Z"
 
 
 def test_reset_claim_restores_seed(client):
     api, repo = client
-    api.post("/claims/SEED-1/correct", json={"diagnosis_code": "J18.9"})
+    api.post("/claims/SEED-1/correct", json={"diagnosis_code": "CA40.Z"})
     body = api.post("/claims/SEED-1/reset").json()
     assert body["claim"]["diagnosis_code"] == "ZZZ999"
     assert body["_preview"]["error_count"] == 1
@@ -87,3 +87,11 @@ def test_reset_can_be_disabled(client, monkeypatch):
     monkeypatch.setattr(main.config, "DEMO_RESET_ENABLED", False)
     assert api.post("/demo/reset").status_code == 403
     assert api.post("/claims/SEED-1/reset").status_code == 403
+
+
+def test_create_without_id_generates_one(client):
+    api, repo = client
+    claim = _base_claim()
+    del claim["id"]
+    body = api.post("/claims", json=claim).json()
+    assert body["claim"]["id"].startswith("SHA-CLM-") and body["claim"]["id"] in repo.rows

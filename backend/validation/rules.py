@@ -1,30 +1,70 @@
 """
-SHA claim validation rules.
+SHA claim validation rules, as a registry.
 
-Each rule is a plain function: takes a claim dict, returns a RuleResult.
-Rules are deterministic and side-effect-free — easy to test in isolation.
+Each rule is a Rule(id, version, severity, fields, source_url, check). check(claim)
+returns None when the claim passes, or a Finding describing the failure. The engine
+reads REGISTRY; severity and metadata live here, not inside the checks.
 
-Adding a new rule: write the function, add it to ALL_RULES at the bottom.
+Claim fields used (internal claim shape, not FHIR):
+  patient_id, facility_code, visit_date, diagnosis_code, coverage_end_date,
+  claimed_amount, fund ("SHIF" | "PHC" | "ECCIF"), preauth_ref,
+  billable_start / billable_end (default: visit_date / discharge_date or visit_date),
+  items[]: sequence, service_code, description, quantity, unit_price, net,
+           service_start, service_end
+
+Adding a rule: write a check function, add a Rule to REGISTRY, add pass/fail tests.
 """
 
 import re
 from dataclasses import dataclass, field as dc_field
 from datetime import date, datetime
-from typing import Optional
+from typing import Callable, Optional
+
+from data.sha_tariffs import get_intervention
+from terminology import icd11
+
+AFYALINK = "https://afyalink.dha.go.ke/claim-integration"
+IG_INTERVENTIONS = (
+    "https://build.fhir.org/ig/IntelliSOFT-Consulting/Kenya-eClaims-FHIR-IG/"
+    "CodeSystem-KenyaSocialHealthAuthorityInterventionCS.html"
+)
+
+
+@dataclass
+class Finding:
+    """What a failing check reports. Metadata (severity, source) comes from the Rule."""
+    message: str
+    suggestion: str
+    fields: Optional[list[str]] = None        # overrides the rule's default fields
+    suggested_value: Optional[object] = None  # only when it can be computed exactly
+    suggested_label: Optional[str] = None     # how to describe a non-scalar suggested_value
+
+
+@dataclass(frozen=True)
+class Rule:
+    id: str
+    version: str
+    severity: str             # "error" deducts 20 points, "warning" 10
+    fields: tuple[str, ...]   # claim fields the officer edits to clear the rule
+    source_url: Optional[str]
+    source_label: str
+    check: Callable[[dict], Optional[Finding]]
 
 
 @dataclass
 class RuleResult:
     rule_id: str
     passed: bool
-    severity: str          # "error" deducts 20pts, "warning" deducts 10pts
-    field: Optional[str]   # which field to highlight in the frontend
-    message: str           # short technical description
-    suggestion: str        # what the officer should do (advice text, never a field value)
-    # Every claim field the officer can edit to clear this rule. Defaults to [field].
+    severity: str
+    field: Optional[str]   # first field, kept for older clients
+    message: str
+    suggestion: str        # advice text, never a field value
     fields: list[str] = dc_field(default_factory=list)
-    # A value the UI may apply directly, only when it can be computed deterministically.
     suggested_value: Optional[object] = None
+    suggested_label: Optional[str] = None
+    rule_version: str = ""
+    source_url: Optional[str] = None
+    source_label: str = ""
 
     def to_dict(self) -> dict:
         out = {
@@ -32,19 +72,39 @@ class RuleResult:
             "passed": self.passed,
             "severity": self.severity,
             "field": self.field,
-            "fields": self.fields or ([self.field] if self.field else []),
+            "fields": self.fields,
             "message": self.message,
             "suggestion": self.suggestion,
+            "rule_version": self.rule_version,
+            "source_url": self.source_url,
+            "source_label": self.source_label,
         }
         if self.suggested_value is not None:
             out["suggested_value"] = self.suggested_value
+            if self.suggested_label:
+                out["suggested_label"] = self.suggested_label
         return out
 
 
-def _pass(rule_id: str, severity: str = "error") -> RuleResult:
-    """Shorthand for a passing result — keeps rule functions readable."""
-    return RuleResult(rule_id, True, severity, None, "Check passed", "")
+def run_rule(rule: "Rule", claim: dict) -> RuleResult:
+    finding = rule.check(claim)
+    if finding is None:
+        return RuleResult(
+            rule.id, True, rule.severity, None, "Check passed", "",
+            rule_version=rule.version, source_url=rule.source_url, source_label=rule.source_label,
+        )
+    fields = finding.fields or list(rule.fields)
+    return RuleResult(
+        rule.id, False, rule.severity, fields[0] if fields else None,
+        finding.message, finding.suggestion, fields,
+        finding.suggested_value, finding.suggested_label,
+        rule.version, rule.source_url, rule.source_label,
+    )
 
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def _to_float(value) -> float:
     try:
@@ -53,325 +113,406 @@ def _to_float(value) -> float:
         return 0.0
 
 
-def _items_total(items: list) -> float:
-    return sum(
-        _to_float(i.get("unit_price")) * max(1, int(_to_float(i.get("quantity")) or 1))
-        for i in items
+def _parse_date(value) -> Optional[date]:
+    """Date part only; SHA ignores time. Accepts YYYY-MM-DD or an ISO datetime."""
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(raw[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _items(claim: dict) -> list[dict]:
+    items = claim.get("items") or []
+    return items if isinstance(items, list) else []
+
+
+def item_net(item: dict) -> float:
+    """Item net amount: explicit net, else quantity x unit price."""
+    if item.get("net") not in (None, ""):
+        return _to_float(item.get("net"))
+    return _to_float(item.get("quantity")) * _to_float(item.get("unit_price"))
+
+
+def net_total(claim: dict) -> float:
+    return round(sum(item_net(i) for i in _items(claim)), 2)
+
+
+def billable_period(claim: dict) -> tuple[Optional[date], Optional[date]]:
+    start = _parse_date(claim.get("billable_start") or claim.get("visit_date"))
+    end = _parse_date(
+        claim.get("billable_end") or claim.get("discharge_date") or claim.get("visit_date")
+    )
+    return start, end
+
+
+def _is_maternity(claim: dict) -> bool:
+    # ICD-11 chapter 18 (pregnancy, childbirth, puerperium) codes start with JA or JB.
+    diagnosis = str(claim.get("diagnosis_code", "")).strip().upper()
+    return str(claim.get("department", "")).strip().lower() == "maternity" or diagnosis[:2] in ("JA", "JB")
+
+
+def _describe(item: dict, idx: int) -> str:
+    return f'item {idx} ("{item.get("description") or item.get("service_code") or "unnamed"}")'
+
+
+def _capitalize(text: str) -> str:
+    return text[:1].upper() + text[1:]
+
+
+# ---------------------------------------------------------------------------
+# Checks
+# ---------------------------------------------------------------------------
+
+_REQUIRED = {
+    "patient_id": "Patient / client registry ID",
+    "facility_code": "Health facility code (FID)",
+    "visit_date": "Date of visit",
+    "diagnosis_code": "ICD-11 diagnosis code",
+}
+
+
+def check_required_fields(claim: dict) -> Optional[Finding]:
+    missing = [k for k in _REQUIRED if not str(claim.get(k, "")).strip()]
+    if not missing:
+        return None
+    return Finding(
+        f"Required fields are empty: {', '.join(_REQUIRED[k] for k in missing)}",
+        "Fill in all highlighted fields. SHA rejects any claim missing these values.",
+        fields=missing,
+    )
+
+
+def check_icd11(claim: dict) -> Optional[Finding]:
+    code = str(claim.get("diagnosis_code", "")).strip()
+    if not code:
+        return None  # reported by MISSING_FIELDS
+    reason = icd11.format_error(code)
+    if reason and icd11.looks_like_icd10(code):
+        return Finding(
+            f'"{code}" looks like an ICD-10 code. SHA requires ICD-11 on every claim',
+            "Find the matching ICD-11 code in the WHO ICD-11 browser (for example pneumonia "
+            "is CA40.Z in ICD-11, J18.9 in ICD-10) and enter that instead.",
+        )
+    if reason:
+        return Finding(
+            f'"{code}" is not a valid ICD-11 code: {reason}',
+            "ICD-11 codes look like 1A00, CA40.Z or DB10.02 and never use the letters I or O. "
+            "Check the WHO ICD-11 browser.",
+        )
+    if icd11.lookup(code) is False:
+        return Finding(
+            f'"{code}" has a valid ICD-11 format but was not found in WHO ICD-11 ({icd11.lookup_release()})',
+            "Check the code in the WHO ICD-11 browser; it may be a typo or a retired code.",
+        )
+    return None
+
+
+def check_visit_date(claim: dict) -> Optional[Finding]:
+    raw = str(claim.get("visit_date", "")).strip()
+    if not raw:
+        return None  # reported by MISSING_FIELDS
+    visit = _parse_date(raw)
+    if visit is None:
+        return Finding(
+            f'Visit date "{raw}" is not in YYYY-MM-DD format',
+            "Use the format YYYY-MM-DD, for example 2026-07-03.",
+        )
+    if visit > date.today():
+        return Finding(
+            f"Visit date {raw} is {(visit - date.today()).days} day(s) in the future",
+            "SHA only accepts claims for services already rendered. Correct the date.",
+        )
+    return None
+
+
+def check_items_present(claim: dict) -> Optional[Finding]:
+    items = _items(claim)
+    if not items:
+        return Finding(
+            "No service items are listed on this claim",
+            "Add at least one service item with a SHA intervention code.",
+        )
+    for idx, item in enumerate(items, start=1):
+        if not str(item.get("service_code", "")).strip():
+            return Finding(
+                f"{_capitalize(_describe(item, idx))} has no intervention code",
+                "Every item must carry a SHA intervention code (productOrService).",
+            )
+    return None
+
+
+_BILLABLE_CODE = re.compile(r"^(SHA|PMF)-\d{2}-\d{3}$")
+_CHAPTER_CODE = re.compile(r"^(SHA|PMF)-\d{2}(-SC-\d{2})?$")
+
+
+def check_service_code_format(claim: dict) -> Optional[Finding]:
+    bad = []
+    for idx, item in enumerate(_items(claim), start=1):
+        code = str(item.get("service_code", "")).strip().upper()
+        if code and not _BILLABLE_CODE.match(code):
+            kind = (
+                "a benefit chapter, not a billable intervention"
+                if _CHAPTER_CODE.match(code)
+                else "not a SHA intervention code"
+            )
+            bad.append(f'{_describe(item, idx)}: "{code}" is {kind}')
+    if not bad:
+        return None
+    return Finding(
+        _capitalize("; ".join(bad)),
+        "SHA intervention codes look like SHA-12-001 (chapter 12, intervention 001). "
+        "Use the code from the SHA benefits and tariffs list.",
+    )
+
+
+def check_quantity(claim: dict) -> Optional[Finding]:
+    for idx, item in enumerate(_items(claim), start=1):
+        if _to_float(item.get("quantity")) <= 0:
+            return Finding(
+                f"{_capitalize(_describe(item, idx))} has a quantity of {item.get('quantity')}",
+                "Quantity must be a positive number.",
+            )
+    return None
+
+
+def check_serviced_period_present(claim: dict) -> Optional[Finding]:
+    items = _items(claim)
+    missing = [
+        idx for idx, item in enumerate(items, start=1)
+        if not (_parse_date(item.get("service_start")) and _parse_date(item.get("service_end")))
+    ]
+    if not missing:
+        return None
+    finding = Finding(
+        f"Item(s) {', '.join(map(str, missing))} have no complete service period (start and end date)",
+        "Enter the date each service started and ended. SHA uses these dates to check the claim period.",
+    )
+    start, end = billable_period(claim)
+    # A single-day claim leaves only one possible service date, so the fix is exact.
+    if start and start == end:
+        day = start.isoformat()
+        finding.suggested_value = [
+            {
+                **item,
+                "service_start": item.get("service_start") or day,
+                "service_end": item.get("service_end") or day,
+            }
+            for item in items
+        ]
+        finding.suggested_label = f"fill missing service dates with {day}"
+    return finding
+
+
+def check_serviced_period_in_billable(claim: dict) -> Optional[Finding]:
+    start, end = billable_period(claim)
+    if not start or not end:
+        return None  # nothing to compare against; the visit date rules report this
+    outside = []
+    for idx, item in enumerate(_items(claim), start=1):
+        s, e = _parse_date(item.get("service_start")), _parse_date(item.get("service_end"))
+        if not s or not e:
+            continue  # reported by SERVICED_PERIOD_PRESENT
+        if s > e:
+            outside.append(f"item {idx} ends before it starts")
+        elif s < start or e > end:
+            outside.append(f"item {idx} ({s} to {e})")
+    if not outside:
+        return None
+    return Finding(
+        f"Service dates fall outside the claim period {start} to {end}: {'; '.join(outside)}",
+        "Each item's service dates must fall within the claim's billable period (dates only, time "
+        "is ignored). Correct the item dates or the claim period.",
+        fields=["items", "billable_start", "billable_end"],
+    )
+
+
+def check_item_sequence(claim: dict) -> Optional[Finding]:
+    items = _items(claim)
+    if not items:
+        return None
+    try:
+        seqs = [int(item.get("sequence")) for item in items]
+    except (TypeError, ValueError):
+        seqs = None
+    if seqs is not None and sorted(seqs) == list(range(1, len(items) + 1)):
+        return None
+    if seqs is None:
+        problem = "some items have no sequence number"
+    elif len(set(seqs)) != len(seqs):
+        problem = "sequence numbers are repeated"
+    else:
+        problem = f"sequence numbers {sorted(seqs)} are not 1 to {len(items)} without gaps"
+    return Finding(
+        f"Item sequence is invalid: {problem}",
+        "Number the items 1, 2, 3 ... with no gaps or repeats. The same intervention code may "
+        "appear more than once as long as each has its own sequence number.",
+        suggested_value=[{**item, "sequence": n} for n, item in enumerate(items, start=1)],
+        suggested_label=f"renumber items 1 to {len(items)} in their current order",
+    )
+
+
+def check_total_equals_net(claim: dict) -> Optional[Finding]:
+    if not _items(claim):
+        return None
+    total = net_total(claim)
+    claimed = round(_to_float(claim.get("claimed_amount")), 2)
+    if claimed == total:
+        return None
+    return Finding(
+        f"Claim total KES {claimed:,.2f} does not equal the sum of item net amounts KES {total:,.2f}",
+        "SHA requires the claim total to match the item amounts exactly. Correct the total or the items.",
+        suggested_value=total,
+    )
+
+
+def check_phc_zero_total(claim: dict) -> Optional[Finding]:
+    if str(claim.get("fund", "")).strip().upper() != "PHC":
+        return None
+    claimed = _to_float(claim.get("claimed_amount"))
+    if claimed == 0 and net_total(claim) == 0:
+        return None
+    return Finding(
+        f"Primary Health Care (PHC) claims must have a zero total; this one totals KES {claimed:,.2f}",
+        "PHC services are paid by capitation. Set item prices and the claim total to 0, "
+        "or change the fund if this is not a PHC claim.",
+        fields=["claimed_amount", "items", "fund"],
+    )
+
+
+def check_preauth(claim: dict) -> Optional[Finding]:
+    if str(claim.get("preauth_ref", "")).strip():
+        return None
+    needing = sorted({
+        f"{info.code} ({info.description})"
+        for item in _items(claim)
+        if (info := get_intervention(item.get("service_code", ""))) and info.requires_preauth
+    })
+    if not needing:
+        return None
+    return Finding(
+        f"No pre-authorization reference, but {', '.join(needing)} require(s) pre-authorization",
+        "Request pre-authorization from SHA and enter the reference before submitting.",
+    )
+
+
+def check_tariff_ceiling(claim: dict) -> Optional[Finding]:
+    over = []
+    for idx, item in enumerate(_items(claim), start=1):
+        info = get_intervention(item.get("service_code", ""))
+        price = _to_float(item.get("unit_price"))
+        if info and info.tariff_kes is not None and price > info.tariff_kes:
+            over.append(
+                f"{_describe(item, idx)} unit price KES {price:,.0f} exceeds the sample tariff "
+                f"KES {info.tariff_kes:,.0f}"
+            )
+    if not over:
+        return None
+    return Finding(
+        _capitalize("; ".join(over)),
+        "SHA pays up to the tariff for each intervention; amounts above it will not be reimbursed. "
+        "(Tariffs here are sample values, see sha_tariffs_sample.csv.)",
+    )
+
+
+def check_coverage_active(claim: dict) -> Optional[Finding]:
+    end_date = _parse_date(claim.get("coverage_end_date"))
+    visit_date = _parse_date(claim.get("visit_date"))
+    if not end_date or not visit_date or visit_date <= end_date:
+        return None
+    return Finding(
+        f"Coverage expired {(visit_date - end_date).days} day(s) before the visit date "
+        f"(expired {claim.get('coverage_end_date')})",
+        "Confirm the patient renewed their SHA cover before the visit. Check the SHA portal.",
+    )
+
+
+def check_amount_reasonable(claim: dict) -> Optional[Finding]:
+    claimed = _to_float(claim.get("claimed_amount"))
+    maternity = _is_maternity(claim)
+    threshold = 150_000 if maternity else 50_000
+    if claimed <= threshold:
+        return None
+    return Finding(
+        f"Claimed KES {claimed:,.0f} exceeds the {'maternity' if maternity else 'standard'} "
+        f"review threshold of KES {threshold:,.0f}",
+        "Attach supporting documentation. SHA may flag this for manual review.",
+    )
+
+
+def check_partograph(claim: dict) -> Optional[Finding]:
+    if not _is_maternity(claim) or str(claim.get("partograph_id", "")).strip():
+        return None
+    return Finding(
+        "Maternity claim has no linked partograph reference",
+        "Attach the partograph record ID before submitting. Required under facility SOP for maternity claims.",
+    )
+
+
+def check_renal_frequency(claim: dict) -> Optional[Finding]:
+    if str(claim.get("department", "")).strip().lower() != "renal":
+        return None
+    sessions = claim.get("sessions_this_week")
+    if sessions is None or _to_float(sessions) <= 3:
+        return None
+    return Finding(
+        f"{sessions} dialysis sessions this week exceeds the typical 3x/week pattern",
+        "Add a clinical note explaining the increased frequency, or correct the session count.",
+    )
+
+
+def check_postop_notes(claim: dict) -> Optional[Finding]:
+    if str(claim.get("department", "")).strip().lower() != "surgical" or not claim.get("overnight_stay"):
+        return None
+    if str(claim.get("postop_notes_attached", "")).strip():
+        return None
+    return Finding(
+        "This procedure included an overnight stay but has no post-op notes attached",
+        "Attach the discharge summary before submission.",
     )
 
 
 # ---------------------------------------------------------------------------
-# Rule 1 — Required fields must be present and non-empty
+# Registry, in display order: errors first.
 # ---------------------------------------------------------------------------
 
-def rule_required_fields(claim: dict) -> RuleResult:
-    required = {
-        "patient_id": "Patient / Insuree ID",
-        "facility_code": "Health facility code",
-        "visit_date": "Date of visit",
-        "diagnosis_code": "ICD-10 diagnosis code",
-    }
+_LOCAL = "Hakiki local check"
+_SOP = "Facility SOP (local)"
 
-    missing = [
-        field_key
-        for field_key in required
-        if not str(claim.get(field_key, "")).strip()
-    ]
-
-    if missing:
-        return RuleResult(
-            "MISSING_FIELDS",
-            False,
-            "error",
-            "multiple",
-            f"Required fields are empty: {', '.join(required[k] for k in missing)}",
-            "Fill in all highlighted fields. SHA rejects any claim missing these values.",
-            fields=missing,
-        )
-
-    return _pass("MISSING_FIELDS")
-
-
-# ---------------------------------------------------------------------------
-# Rule 2 — ICD-10 diagnosis code must be in valid format
-#          Format: one uppercase letter + two digits, optionally a dot and 1-4 chars
-#          Examples: J18.9 / O80 / E11.9 / K59.0
-# ---------------------------------------------------------------------------
-
-_ICD10_PATTERN = re.compile(r"^[A-Z][0-9]{2}(\.[0-9A-Z]{1,4})?$")
-
-
-def rule_icd10_format(claim: dict) -> RuleResult:
-    code = str(claim.get("diagnosis_code", "")).strip()
-
-    if not code:
-        # Already caught by rule_required_fields — don't double-report
-        return _pass("INVALID_ICD10")
-
-    if not _ICD10_PATTERN.match(code):
-        return RuleResult(
-            "INVALID_ICD10",
-            False,
-            "error",
-            "diagnosis_code",
-            f'"{code}" is not a valid ICD-10 code',
-            (
-                "ICD-10 codes are: one letter + two digits, optionally a dot + subcode. "
-                "Examples: J18.9, O80, E11.9. Check the WHO ICD-10 browser if unsure."
-            ),
-        )
-
-    return _pass("INVALID_ICD10")
-
-
-# ---------------------------------------------------------------------------
-# Rule 3 — Visit date cannot be in the future
-# ---------------------------------------------------------------------------
-
-def rule_visit_date_valid(claim: dict) -> RuleResult:
-    raw = str(claim.get("visit_date", "")).strip()
-
-    if not raw:
-        return _pass("VISIT_DATE")  # Caught by required fields
-
-    try:
-        visit = datetime.strptime(raw, "%Y-%m-%d").date()
-    except ValueError:
-        return RuleResult(
-            "VISIT_DATE",
-            False,
-            "error",
-            "visit_date",
-            f'Visit date "{raw}" is not in YYYY-MM-DD format',
-            "Use the format YYYY-MM-DD, for example 2026-07-03.",
-        )
-
-    if visit > date.today():
-        days_ahead = (visit - date.today()).days
-        return RuleResult(
-            "VISIT_DATE",
-            False,
-            "error",
-            "visit_date",
-            f"Visit date {raw} is {days_ahead} day(s) in the future",
-            "SHA only accepts claims for services already rendered. Correct the date.",
-        )
-
-    return _pass("VISIT_DATE")
-
-
-# ---------------------------------------------------------------------------
-# Rule 4 — Claim must have at least one item with a valid service code
-# ---------------------------------------------------------------------------
-
-def rule_items_valid(claim: dict) -> RuleResult:
-    items = claim.get("items", [])
-
-    if not items:
-        return RuleResult(
-            "EMPTY_ITEMS",
-            False,
-            "error",
-            "items",
-            "No service items are listed on this claim",
-            "Add at least one service, procedure, or medication item with a SHA service code.",
-        )
-
-    for idx, item in enumerate(items, start=1):
-        code = str(item.get("service_code", "")).strip()
-        qty = item.get("quantity", 0)
-
-        if not code:
-            desc = item.get("description", f"item {idx}")
-            return RuleResult(
-                "EMPTY_ITEMS",
-                False,
-                "error",
-                "items",
-                f'Item {idx} ("{desc}") has no service code',
-                "Every item must have a valid SHA benefit package service code.",
-            )
-
-        if not isinstance(qty, (int, float)) or qty <= 0:
-            return RuleResult(
-                "EMPTY_ITEMS",
-                False,
-                "warning",
-                "items",
-                f"Item {idx} has a quantity of {qty}",
-                "Quantity must be a positive number.",
-            )
-
-    return _pass("EMPTY_ITEMS")
-
-
-# ---------------------------------------------------------------------------
-# Rule 5 — Claimed amount must be within 5% of the sum of line items
-# ---------------------------------------------------------------------------
-
-def rule_amount_matches_items(claim: dict) -> RuleResult:
-    items = claim.get("items", [])
-
-    if not items:
-        return _pass("AMOUNT_MISMATCH", "warning")  # No items = caught elsewhere
-
-    items_total = _items_total(items)
-    claimed = _to_float(claim.get("claimed_amount"))
-
-    if items_total == 0:
-        return _pass("AMOUNT_MISMATCH", "warning")
-
-    discrepancy_pct = abs(claimed - items_total) / items_total
-
-    if discrepancy_pct > 0.05:
-        return RuleResult(
-            "AMOUNT_MISMATCH",
-            False,
-            "warning",
-            "claimed_amount",
-            (
-                f"Claimed KES {claimed:,.0f} differs from item total "
-                f"KES {items_total:,.0f} by {discrepancy_pct * 100:.1f}%"
-            ),
-            "Recalculate the total from your line items or correct the claimed amount.",
-            suggested_value=round(items_total, 2),
-        )
-
-    return _pass("AMOUNT_MISMATCH", "warning")
-
-
-# ---------------------------------------------------------------------------
-# Rule 6 — Patient coverage must not be expired on the visit date
-# ---------------------------------------------------------------------------
-
-def rule_coverage_active(claim: dict) -> RuleResult:
-    end_raw = str(claim.get("coverage_end_date", "")).strip()
-    visit_raw = str(claim.get("visit_date", "")).strip()
-
-    if not end_raw or not visit_raw:
-        return _pass("COVERAGE_EXPIRED")
-
-    try:
-        end_date = datetime.strptime(end_raw, "%Y-%m-%d").date()
-        visit_date = datetime.strptime(visit_raw, "%Y-%m-%d").date()
-    except ValueError:
-        return _pass("COVERAGE_EXPIRED")  # Date format issues caught by other rules
-
-    if visit_date > end_date:
-        days_over = (visit_date - end_date).days
-        return RuleResult(
-            "COVERAGE_EXPIRED",
-            False,
-            "error",
-            "coverage_end_date",
-            f"Coverage expired {days_over} day(s) before the visit date (expired {end_raw})",
-            "Confirm the patient renewed their SHA cover before the visit. Check the SHA portal.",
-        )
-
-    return _pass("COVERAGE_EXPIRED")
-
-
-# ---------------------------------------------------------------------------
-# Rule 7 — Claimed amount should not exceed SHA thresholds
-#          Maternity claims (ICD-10 O*) have a higher threshold
-# ---------------------------------------------------------------------------
-
-def rule_amount_reasonable(claim: dict) -> RuleResult:
-    claimed = _to_float(claim.get("claimed_amount"))
-    diagnosis = str(claim.get("diagnosis_code", "")).strip().upper()
-
-    is_maternity = diagnosis.startswith("O")
-    threshold = 150_000 if is_maternity else 50_000
-
-    if claimed > threshold:
-        return RuleResult(
-            "AMOUNT_HIGH",
-            False,
-            "warning",
-            "claimed_amount",
-            f"Claimed KES {claimed:,.0f} exceeds the {('maternity' if is_maternity else 'standard')} threshold of KES {threshold:,.0f}",
-            "Attach supporting documentation. SHA may flag this for manual review.",
-        )
-
-    return _pass("AMOUNT_HIGH", "warning")
-
-
-# ---------------------------------------------------------------------------
-# All rules in execution order.
-# Errors first so the score reflects the most critical issues prominently.
-# ---------------------------------------------------------------------------
-
-def rule_maternity_partograph(claim: dict) -> RuleResult:
-    department = str(claim.get("department", "")).strip().lower()
-    diagnosis = str(claim.get("diagnosis_code", "")).strip().upper()
-    is_maternity = department == "maternity" or diagnosis.startswith("O")
-
-    if not is_maternity:
-        return _pass("MISSING_PARTOGRAPH")
-
-    partograph = str(claim.get("partograph_id", "")).strip()
-    if not partograph:
-        return RuleResult(
-            "MISSING_PARTOGRAPH",
-            False,
-            "error",
-            "partograph_id",
-            "Maternity claim has no linked partograph reference",
-            "Attach the partograph record ID before submitting — required under facility SOP for maternity claims.",
-        )
-    return _pass("MISSING_PARTOGRAPH")
-
-
-def rule_renal_session_frequency(claim: dict) -> RuleResult:
-    department = str(claim.get("department", "")).strip().lower()
-    if department != "renal":
-        return _pass("IMPLAUSIBLE_FREQUENCY", "warning")
-
-    sessions = claim.get("sessions_this_week")
-    if sessions is None:
-        return _pass("IMPLAUSIBLE_FREQUENCY", "warning")
-
-    if _to_float(sessions) > 3:
-        return RuleResult(
-            "IMPLAUSIBLE_FREQUENCY",
-            False,
-            "warning",
-            "sessions_this_week",
-            f"{sessions} dialysis sessions this week exceeds the typical 3x/week pattern",
-            "Add a clinical note explaining the increased frequency, or correct the session count.",
-        )
-    return _pass("IMPLAUSIBLE_FREQUENCY", "warning")
-
-
-def rule_surgical_postop_notes(claim: dict) -> RuleResult:
-    department = str(claim.get("department", "")).strip().lower()
-    if department != "surgical":
-        return _pass("MISSING_POSTOP_NOTES")
-
-    if not claim.get("overnight_stay"):
-        return _pass("MISSING_POSTOP_NOTES")
-
-    if not str(claim.get("postop_notes_attached", "")).strip():
-        return RuleResult(
-            "MISSING_POSTOP_NOTES",
-            False,
-            "error",
-            "postop_notes_attached",
-            "This procedure included an overnight stay but has no post-op notes attached",
-            "Attach the discharge summary before submission.",
-        )
-    return _pass("MISSING_POSTOP_NOTES")
-
-
-ALL_RULES = [
-    rule_required_fields,
-    rule_icd10_format,
-    rule_visit_date_valid,
-    rule_items_valid,
-    rule_coverage_active,
-    rule_amount_matches_items,
-    rule_amount_reasonable,
-    rule_maternity_partograph,
-    rule_renal_session_frequency,
-    rule_surgical_postop_notes,
+REGISTRY: list[Rule] = [
+    Rule("MISSING_FIELDS", "2", "error", ("patient_id", "facility_code", "visit_date", "diagnosis_code"),
+         AFYALINK, "AfyaLink: patient, facility and diagnosis are required", check_required_fields),
+    Rule("INVALID_ICD11", "1", "error", ("diagnosis_code",),
+         AFYALINK, "AfyaLink: ICD-11 is required on all claims", check_icd11),
+    Rule("VISIT_DATE", "1", "error", ("visit_date",), None, _LOCAL, check_visit_date),
+    Rule("EMPTY_ITEMS", "2", "error", ("items",),
+         AFYALINK, "AfyaLink: items need a SHA intervention code", check_items_present),
+    Rule("SHA_SERVICE_CODE_FORMAT", "1", "error", ("items",),
+         IG_INTERVENTIONS, "DHA eClaims IG: SHA intervention codes", check_service_code_format),
+    Rule("SERVICED_PERIOD_PRESENT", "1", "error", ("items",),
+         AFYALINK, "AfyaLink: each item needs servicedPeriod start and end", check_serviced_period_present),
+    Rule("SERVICED_PERIOD_IN_BILLABLE", "1", "error", ("items",),
+         AFYALINK, "AfyaLink: item dates within the billablePeriod", check_serviced_period_in_billable),
+    Rule("ITEM_SEQUENCE_VALID", "1", "error", ("items",),
+         AFYALINK, "AfyaLink: unique item sequence numbers", check_item_sequence),
+    Rule("TOTAL_EQUALS_NET_SUM", "1", "error", ("claimed_amount",),
+         AFYALINK, "AfyaLink: claim total equals the sum of item net", check_total_equals_net),
+    Rule("PHC_ZERO_TOTAL", "1", "error", ("claimed_amount",),
+         AFYALINK, "AfyaLink: PHC claims have a zero total", check_phc_zero_total),
+    Rule("COVERAGE_EXPIRED", "1", "error", ("coverage_end_date",), None, _LOCAL, check_coverage_active),
+    Rule("MISSING_PARTOGRAPH", "1", "error", ("partograph_id",), None, _SOP, check_partograph),
+    Rule("MISSING_POSTOP_NOTES", "1", "error", ("postop_notes_attached",), None, _SOP, check_postop_notes),
+    Rule("ITEM_QUANTITY_VALID", "1", "warning", ("items",), None, _LOCAL, check_quantity),
+    Rule("PREAUTH_REQUIRED", "1", "warning", ("preauth_ref",),
+         AFYALINK, "AfyaLink: some services need pre-authorization", check_preauth),
+    Rule("TARIFF_CEILING", "1", "warning", ("items",),
+         None, "Sample tariff fixture (not official)", check_tariff_ceiling),
+    Rule("AMOUNT_HIGH", "1", "warning", ("claimed_amount",), None, _LOCAL, check_amount_reasonable),
+    Rule("IMPLAUSIBLE_FREQUENCY", "1", "warning", ("sessions_this_week",), None, _SOP, check_renal_frequency),
 ]
+
+RULES_BY_ID = {rule.id: rule for rule in REGISTRY}
+# Bump when any rule changes; returned with every validation result.
+RULESET_VERSION = "2026.09-v2"

@@ -1,173 +1,287 @@
 """
-Unit tests for the validation rules engine.
-Run with: pytest tests/ -v
-These must pass before the demo — judges check for test coverage.
+Unit tests for the validation rule registry and engine.
+Run with: pytest -q
+
+Every rule in REGISTRY has at least one passing and one failing case here.
+The v1 tests for INVALID_ICD10 and the 5%-tolerance AMOUNT_MISMATCH were replaced:
+SHA requires ICD-11 and an exact total (see CLAUDE_CODE_BRIEF.md, Phase 2).
 """
 
 from datetime import date, timedelta
+
 import pytest
 
-from validation.rules import (
-    rule_required_fields,
-    rule_icd10_format,
-    rule_visit_date_valid,
-    rule_items_valid,
-    rule_amount_matches_items,
-    rule_coverage_active,
-)
+from terminology import icd11
 from validation.engine import validate
+from validation.rules import REGISTRY, RULES_BY_ID, run_rule
+
+YESTERDAY = str(date.today() - timedelta(days=1))
+TWO_DAYS_AGO = str(date.today() - timedelta(days=2))
+TOMORROW = str(date.today() + timedelta(days=1))
+
+
+def _item(seq=1, code="SHA-12-001", price=1500, qty=1, start=YESTERDAY, end=None, **extra) -> dict:
+    return {
+        "sequence": seq, "service_code": code, "description": "Consultation",
+        "quantity": qty, "unit_price": price, "service_start": start,
+        "service_end": end if end is not None else start, **extra,
+    }
 
 
 def _base_claim(**overrides) -> dict:
-    """Return a valid claim, optionally overriding specific fields."""
-    today = str(date.today() - timedelta(days=1))
+    """A claim that passes every rule, optionally overriding specific fields."""
     claim = {
         "id": "TEST-001",
         "patient_id": "INS-TEST-001",
         "facility_code": "FAC-001",
         "facility_name": "Test Hospital",
-        "visit_date": today,
-        "diagnosis_code": "J18.9",
-        "diagnosis_description": "Pneumonia",
+        "visit_date": YESTERDAY,
+        "diagnosis_code": "CA40.Z",
+        "diagnosis_description": "Pneumonia, organism unspecified",
         "coverage_start_date": "2024-01-01",
-        "coverage_end_date": "2027-01-01",
-        "items": [
-            {"service_code": "SHA-CONS-001", "description": "Consultation", "quantity": 1, "unit_price": 1500}
-        ],
+        "coverage_end_date": "2099-01-01",
+        "fund": "SHIF",
+        "items": [_item()],
         "claimed_amount": 1500,
     }
     claim.update(overrides)
     return claim
 
 
+def check(rule_id: str, claim: dict):
+    return run_rule(RULES_BY_ID[rule_id], claim)
+
+
+def test_base_claim_passes_every_rule():
+    failing = [r.rule_id for r in (run_rule(rule, _base_claim()) for rule in REGISTRY) if not r.passed]
+    assert failing == []
+
+
+def test_every_rule_has_metadata():
+    for rule in REGISTRY:
+        assert rule.severity in ("error", "warning")
+        assert rule.version and rule.source_label and rule.fields
+
+
 class TestRequiredFields:
-    def test_passes_when_all_fields_present(self):
-        result = rule_required_fields(_base_claim())
-        assert result.passed
-
-    def test_fails_when_patient_id_missing(self):
-        result = rule_required_fields(_base_claim(patient_id=""))
-        assert not result.passed
-        assert result.severity == "error"
-        assert "Patient" in result.message
-
-    def test_fails_when_multiple_fields_missing(self):
-        result = rule_required_fields(_base_claim(patient_id="", facility_code=""))
-        assert not result.passed
+    def test_fails_listing_each_missing_field(self):
+        result = check("MISSING_FIELDS", _base_claim(patient_id="", facility_code=""))
+        assert not result.passed and result.severity == "error"
+        assert result.fields == ["patient_id", "facility_code"]
 
 
-class TestICD10Format:
-    @pytest.mark.parametrize("code", ["J18.9", "O80", "E11.9", "A00", "Z99.89"])
+class TestICD11:
+    @pytest.mark.parametrize("code", ["1A00", "CA40.Z", "DB10.02", "GB61.5", "5A11", "JB20.Z", "DA42.Z&XT5R", "NC72.2/XJ4NP"])
     def test_valid_codes(self, code):
-        result = rule_icd10_format(_base_claim(diagnosis_code=code))
-        assert result.passed
+        assert check("INVALID_ICD11", _base_claim(diagnosis_code=code)).passed
 
-    @pytest.mark.parametrize("code", ["ZZZ999", "J1.9", "1AB", "INVALID", "j18.9"])
-    def test_invalid_codes(self, code):
-        result = rule_icd10_format(_base_claim(diagnosis_code=code))
+    @pytest.mark.parametrize("code", ["J18.9", "O80", "E11.9", "A09"])
+    def test_icd10_codes_get_specific_message(self, code):
+        result = check("INVALID_ICD11", _base_claim(diagnosis_code=code))
         assert not result.passed
-        assert result.field == "diagnosis_code"
+        assert "ICD-10" in result.message and "ICD-11" in result.message
+
+    @pytest.mark.parametrize("code", ["ZZZ999", "1I00", "CA4O", "INVALID", "CA40.Z&J18"])
+    def test_invalid_codes(self, code):
+        result = check("INVALID_ICD11", _base_claim(diagnosis_code=code))
+        assert not result.passed and result.field == "diagnosis_code"
+
+    def test_lookup_not_found_fails(self, monkeypatch):
+        monkeypatch.setattr(icd11, "lookup", lambda code: False)
+        assert not check("INVALID_ICD11", _base_claim(diagnosis_code="1A00")).passed
+
+    def test_lookup_unavailable_falls_back_to_format(self, monkeypatch):
+        monkeypatch.setattr(icd11, "lookup", lambda code: None)
+        assert check("INVALID_ICD11", _base_claim(diagnosis_code="1A00")).passed
 
 
 class TestVisitDate:
-    def test_valid_past_date(self):
-        yesterday = str(date.today() - timedelta(days=1))
-        result = rule_visit_date_valid(_base_claim(visit_date=yesterday))
-        assert result.passed
-
     def test_fails_for_future_date(self):
-        tomorrow = str(date.today() + timedelta(days=1))
-        result = rule_visit_date_valid(_base_claim(visit_date=tomorrow))
-        assert not result.passed
-        assert "future" in result.message.lower()
+        result = check("VISIT_DATE", _base_claim(visit_date=TOMORROW))
+        assert not result.passed and "future" in result.message.lower()
 
     def test_fails_for_wrong_format(self):
-        result = rule_visit_date_valid(_base_claim(visit_date="03/07/2026"))
-        assert not result.passed
+        assert not check("VISIT_DATE", _base_claim(visit_date="03/07/2026")).passed
 
 
-class TestItems:
-    def test_passes_with_valid_items(self):
-        result = rule_items_valid(_base_claim())
-        assert result.passed
-
+class TestItemsPresent:
     def test_fails_with_no_items(self):
-        result = rule_items_valid(_base_claim(items=[]))
-        assert not result.passed
-        assert result.severity == "error"
+        assert not check("EMPTY_ITEMS", _base_claim(items=[])).passed
 
-    def test_fails_when_item_missing_service_code(self):
-        items = [{"service_code": "", "description": "Consult", "quantity": 1, "unit_price": 500}]
-        result = rule_items_valid(_base_claim(items=items))
+    def test_fails_when_item_missing_code(self):
+        assert not check("EMPTY_ITEMS", _base_claim(items=[_item(code="")])).passed
+
+
+class TestServiceCodeFormat:
+    @pytest.mark.parametrize("code", ["SHA-12-001", "SHA-16-001", "PMF-12-001"])
+    def test_valid(self, code):
+        assert check("SHA_SERVICE_CODE_FORMAT", _base_claim(items=[_item(code=code)])).passed
+
+    @pytest.mark.parametrize("code", ["SHA-OPD-001", "SHA-CONS-001", "12-001", "SHA-12-01"])
+    def test_invalid(self, code):
+        assert not check("SHA_SERVICE_CODE_FORMAT", _base_claim(items=[_item(code=code)])).passed
+
+    def test_chapter_code_is_explained(self):
+        result = check("SHA_SERVICE_CODE_FORMAT", _base_claim(items=[_item(code="SHA-12")]))
+        assert "chapter" in result.message
+
+
+class TestServicedPeriodPresent:
+    def test_fails_without_end_date(self):
+        result = check("SERVICED_PERIOD_PRESENT", _base_claim(items=[_item(end="")]))
         assert not result.passed
+
+    def test_single_day_claim_suggests_dates(self):
+        result = check("SERVICED_PERIOD_PRESENT", _base_claim(items=[_item(start="", end="")]))
+        assert result.suggested_value[0]["service_start"] == YESTERDAY
+        assert result.suggested_value[0]["service_end"] == YESTERDAY
+
+    def test_multi_day_claim_has_no_suggestion(self):
+        claim = _base_claim(visit_date=TWO_DAYS_AGO, discharge_date=YESTERDAY, items=[_item(start="", end="")])
+        assert check("SERVICED_PERIOD_PRESENT", claim).suggested_value is None
+
+
+class TestServicedPeriodInBillable:
+    def test_passes_inside_multi_day_period(self):
+        claim = _base_claim(visit_date=TWO_DAYS_AGO, discharge_date=YESTERDAY,
+                            items=[_item(start=TWO_DAYS_AGO, end=YESTERDAY)])
+        assert check("SERVICED_PERIOD_IN_BILLABLE", claim).passed
+
+    def test_time_part_is_ignored(self):
+        claim = _base_claim(items=[_item(start=f"{YESTERDAY}T08:00:00", end=f"{YESTERDAY}T23:59:00")])
+        assert check("SERVICED_PERIOD_IN_BILLABLE", claim).passed
+
+    def test_fails_outside_period(self):
+        assert not check("SERVICED_PERIOD_IN_BILLABLE", _base_claim(items=[_item(start=TWO_DAYS_AGO)])).passed
+
+    def test_fails_when_end_before_start(self):
+        claim = _base_claim(visit_date=TWO_DAYS_AGO, discharge_date=YESTERDAY,
+                            items=[_item(start=YESTERDAY, end=TWO_DAYS_AGO)])
+        assert "ends before it starts" in check("SERVICED_PERIOD_IN_BILLABLE", claim).message
+
+
+class TestItemSequence:
+    def test_repeated_code_with_unique_sequences_passes(self):
+        items = [_item(seq=1, code="SHA-16-001"), _item(seq=2, code="SHA-16-001")]
+        assert check("ITEM_SEQUENCE_VALID", _base_claim(items=items)).passed
+
+    @pytest.mark.parametrize("seqs", [[1, 1], [1, 3], [None, 2], [0, 1]])
+    def test_invalid_sequences(self, seqs):
+        items = [_item(seq=s) for s in seqs]
+        result = check("ITEM_SEQUENCE_VALID", _base_claim(items=items))
+        assert not result.passed
+        assert [i["sequence"] for i in result.suggested_value] == [1, 2]
+
+
+class TestTotalEqualsNet:
+    def test_fails_on_any_difference(self):
+        result = check("TOTAL_EQUALS_NET_SUM", _base_claim(claimed_amount=1500.01))
+        assert not result.passed and result.suggested_value == 1500
+
+    def test_uses_explicit_net(self):
+        claim = _base_claim(items=[_item(net=1200)], claimed_amount=1200)
+        assert check("TOTAL_EQUALS_NET_SUM", claim).passed
+
+    def test_non_numeric_amount_does_not_crash(self):
+        assert not check("TOTAL_EQUALS_NET_SUM", _base_claim(claimed_amount="abc")).passed
+
+
+class TestPHCZeroTotal:
+    def test_non_phc_claims_ignored(self):
+        assert check("PHC_ZERO_TOTAL", _base_claim()).passed
+
+    def test_phc_with_zero_total_passes(self):
+        assert check("PHC_ZERO_TOTAL", _base_claim(fund="PHC", items=[_item(price=0)], claimed_amount=0)).passed
+
+    def test_phc_with_amount_fails(self):
+        assert not check("PHC_ZERO_TOTAL", _base_claim(fund="PHC")).passed
+
+
+class TestPreauth:
+    def test_dialysis_without_preauth_warns(self):
+        result = check("PREAUTH_REQUIRED", _base_claim(items=[_item(code="SHA-16-001")]))
+        assert not result.passed and result.severity == "warning"
+
+    def test_dialysis_with_preauth_passes(self):
+        claim = _base_claim(items=[_item(code="SHA-16-001")], preauth_ref="PA-123")
+        assert check("PREAUTH_REQUIRED", claim).passed
+
+
+class TestTariffCeiling:
+    def test_price_above_sample_tariff_warns(self):
+        result = check("TARIFF_CEILING", _base_claim(items=[_item(code="SHA-16-001", price=12000)]))
+        assert not result.passed and result.severity == "warning"
+
+    def test_price_within_tariff_passes(self):
+        assert check("TARIFF_CEILING", _base_claim(items=[_item(code="SHA-16-001", price=10650)])).passed
+
+    def test_codes_without_tariff_are_skipped(self):
+        assert check("TARIFF_CEILING", _base_claim(items=[_item(price=999999)])).passed
 
 
 class TestCoverageActive:
-    def test_passes_when_coverage_valid(self):
-        result = rule_coverage_active(_base_claim())
-        assert result.passed
-
     def test_fails_when_coverage_expired(self):
-        yesterday = str(date.today() - timedelta(days=1))
-        two_days_ago = str(date.today() - timedelta(days=2))
-        result = rule_coverage_active(_base_claim(
-            coverage_end_date=two_days_ago,
-            visit_date=yesterday,
-        ))
-        assert not result.passed
-        assert result.severity == "error"
+        claim = _base_claim(coverage_end_date=TWO_DAYS_AGO)
+        result = check("COVERAGE_EXPIRED", claim)
+        assert not result.passed and result.severity == "error"
+
+
+class TestQuantity:
+    def test_zero_quantity_warns(self):
+        assert not check("ITEM_QUANTITY_VALID", _base_claim(items=[_item(qty=0)])).passed
+
+
+class TestAmountHigh:
+    def test_standard_threshold(self):
+        assert not check("AMOUNT_HIGH", _base_claim(claimed_amount=60000)).passed
+
+    def test_maternity_icd11_chapter_has_higher_threshold(self):
+        assert check("AMOUNT_HIGH", _base_claim(claimed_amount=60000, diagnosis_code="JB20.Z")).passed
+
+
+class TestDepartmentRules:
+    def test_maternity_needs_partograph(self):
+        assert not check("MISSING_PARTOGRAPH", _base_claim(diagnosis_code="JB20.Z")).passed
+        assert check("MISSING_PARTOGRAPH", _base_claim(diagnosis_code="JB20.Z", partograph_id="PG-1")).passed
+
+    def test_renal_frequency(self):
+        assert not check("IMPLAUSIBLE_FREQUENCY", _base_claim(department="renal", sessions_this_week=5)).passed
+        assert check("IMPLAUSIBLE_FREQUENCY", _base_claim(department="renal", sessions_this_week=3)).passed
+
+    def test_surgical_postop_notes(self):
+        claim = _base_claim(department="surgical", overnight_stay=True)
+        assert not check("MISSING_POSTOP_NOTES", claim).passed
+        assert check("MISSING_POSTOP_NOTES", {**claim, "postop_notes_attached": "DS-1"}).passed
+
+
+class TestFixMetadata:
+    def test_single_field_rules_default_fields(self):
+        assert check("INVALID_ICD11", _base_claim(diagnosis_code="ZZZ999")).to_dict()["fields"] == ["diagnosis_code"]
+
+    def test_advice_text_is_never_a_suggested_value(self):
+        assert "suggested_value" not in check("INVALID_ICD11", _base_claim(diagnosis_code="ZZZ999")).to_dict()
+
+    def test_results_carry_source(self):
+        result = check("INVALID_ICD11", _base_claim(diagnosis_code="J18.9")).to_dict()
+        assert result["source_url"].startswith("https://afyalink.dha.go.ke")
+        assert result["rule_version"]
 
 
 class TestEngine:
     def test_perfect_claim_scores_100(self):
         result = validate(_base_claim())
-        assert result["score"] == 100
-        assert result["passed"] is True
-        assert result["error_count"] == 0
+        assert result["score"] == 100 and result["passed"] is True and result["ruleset_version"]
 
     def test_broken_claim_scores_low(self):
-        broken = _base_claim(
-            patient_id="",
-            diagnosis_code="INVALID",
-            items=[],
-        )
-        result = validate(broken)
-        assert result["score"] < 60
-        assert result["error_count"] >= 2
+        result = validate(_base_claim(patient_id="", diagnosis_code="INVALID", items=[]))
+        assert result["score"] < 60 and result["error_count"] >= 2
 
     def test_score_never_goes_below_zero(self):
-        # Even a completely broken claim stays at 0 minimum
-        broken = _base_claim(
-            patient_id="",
-            facility_code="",
-            diagnosis_code="BADCODE",
-            items=[],
-            visit_date=str(date.today() + timedelta(days=10)),
-            coverage_end_date="2020-01-01",
-            claimed_amount=999999,
-        )
-        result = validate(broken)
-        assert result["score"] >= 0
+        broken = _base_claim(patient_id="", facility_code="", diagnosis_code="BAD", visit_date=TOMORROW,
+                             coverage_end_date=TWO_DAYS_AGO, fund="PHC",
+                             items=[_item(seq=None, code="BAD", qty=0, start="")], claimed_amount=60000)
+        assert validate(broken)["score"] == 0
 
-
-class TestFixMetadata:
-    """Rule results tell the UI which fields fix them and when a value can be applied."""
-
-    def test_missing_fields_lists_each_missing_field(self):
-        result = rule_required_fields(_base_claim(patient_id="", diagnosis_code="")).to_dict()
-        assert result["fields"] == ["patient_id", "diagnosis_code"]
-
-    def test_single_field_rules_default_fields_to_field(self):
-        result = rule_icd10_format(_base_claim(diagnosis_code="ZZZ999")).to_dict()
-        assert result["fields"] == ["diagnosis_code"]
-
-    def test_amount_mismatch_suggests_item_total(self):
-        result = rule_amount_matches_items(_base_claim(claimed_amount=9000)).to_dict()
-        assert result["suggested_value"] == 1500
-
-    def test_advice_text_is_never_a_suggested_value(self):
-        result = rule_icd10_format(_base_claim(diagnosis_code="ZZZ999")).to_dict()
-        assert "suggested_value" not in result
-
-    def test_non_numeric_amount_does_not_crash(self):
-        assert rule_amount_matches_items(_base_claim(claimed_amount="abc")).passed is False
+    def test_status_thresholds(self):
+        assert validate(_base_claim())["color"] == "green"
+        assert validate(_base_claim(claimed_amount=1000))["color"] == "amber"  # one error: 80

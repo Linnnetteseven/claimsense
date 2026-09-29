@@ -19,6 +19,8 @@ load_dotenv()
 
 
 import logging
+import secrets
+from datetime import date
 from fastapi import Form, BackgroundTasks
 from fastapi.responses import PlainTextResponse
 from ussd.handler import handle_ussd_session
@@ -206,8 +208,10 @@ async def get_claim(claim_id: str):
 @app.post("/claims")
 async def create_claim(claim: dict):
     """Persist one new draft claim using the existing internal claim shape."""
-    if not claim or not claim.get("id"):
-        raise HTTPException(status_code=400, detail="Claim body must include an id")
+    if not claim:
+        raise HTTPException(status_code=400, detail="Request body must be a claim dict")
+    if not claim.get("id"):
+        claim = {**claim, "id": f"SHA-CLM-{date.today():%Y%m%d}-{secrets.token_hex(3).upper()}"}
     repository = claims_repository()
     if repository.get_claim_by_number(claim["id"]) is not None:
         raise HTTPException(status_code=409, detail=f"Claim '{claim['id']}' already exists")

@@ -17,13 +17,14 @@ function emptyForm() {
     coverage_start_date: "",
     coverage_end_date: "",
     scheme_code: "SHA-2025",
+    fund: "SHIF",
     items: [{ ...EMPTY_ITEM }],
   };
 }
 
 /**
  * Modal form for adding a new claim to the queue. Deliberately mirrors the
- * exact fields the 7 validation rules check, so an officer filling this in
+ * fields the validation rules check, so an officer filling this in
  * already understands what "complete" looks like before they even hit
  * Validate — the form itself teaches the rules.
  */
@@ -70,7 +71,15 @@ export default function AddClaimModal({ onClose, onSubmit }) {
     try {
       await onSubmit({
         ...form,
-        items: form.items.filter((item) => item.service_code || item.description),
+        // Number items and default each service period to the visit date; editable after saving.
+        items: form.items
+          .filter((item) => item.service_code || item.description)
+          .map((item, i) => ({
+            ...item,
+            sequence: i + 1,
+            service_start: item.service_start || form.visit_date,
+            service_end: item.service_end || form.visit_date,
+          })),
         claimed_amount: claimedAmount,
       });
     } catch (err) {
@@ -190,13 +199,13 @@ export default function AddClaimModal({ onClose, onSubmit }) {
                   className="input"
                 />
               </Field>
-              <Field label="Diagnosis (ICD-10)" required>
+              <Field label="Diagnosis (ICD-11)" required>
                 <input
                   required
                   value={form.diagnosis_code}
                   onChange={(e) => updateField("diagnosis_code", e.target.value.toUpperCase())}
                   className="input font-mono"
-                  placeholder="J18.9"
+                  placeholder="CA40.Z"
                 />
               </Field>
               <Field label="Diagnosis description" className="col-span-2">
@@ -263,7 +272,7 @@ export default function AddClaimModal({ onClose, onSubmit }) {
                   <input
                     value={item.service_code}
                     onChange={(e) => updateItem(index, "service_code", e.target.value)}
-                    placeholder="SHA-CONS-001"
+                    placeholder="SHA-12-001"
                     className="input col-span-3 font-mono text-xs"
                   />
                   <input

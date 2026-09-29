@@ -98,6 +98,11 @@ class _Config:
         default=False,
     )
 
+    # Optional WHO ICD API credentials for live ICD-11 code lookup (https://icd.who.int/icdapi).
+    ICD_API_CLIENT_ID: str = os.getenv("ICD_API_CLIENT_ID", "")
+    ICD_API_CLIENT_SECRET: str = os.getenv("ICD_API_CLIENT_SECRET", "")
+    ICD_API_RELEASE: str = os.getenv("ICD_API_RELEASE", "2024-01")
+
     # Allows POST /claims/{id}/reset and POST /demo/reset. Turn off outside demos.
     DEMO_RESET_ENABLED: bool = _env_bool(
         "DEMO_RESET_ENABLED",

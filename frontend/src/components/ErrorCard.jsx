@@ -5,7 +5,15 @@ import { FIELD_INPUTS, PASS_STYLE, SEVERITY_STYLES } from "../constants/status.j
 const INPUT_CLASS =
   "w-full text-xs font-semibold border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2 bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent transition-all";
 
-const EMPTY_ITEM = { service_code: "", description: "", quantity: 1, unit_price: 0 };
+const EMPTY_ITEM = {
+  sequence: 1,
+  service_code: "",
+  description: "",
+  quantity: 1,
+  unit_price: 0,
+  service_start: "",
+  service_end: "",
+};
 
 function submitOnEnter(onSave) {
   return (e) => {
@@ -17,7 +25,7 @@ function submitOnEnter(onSave) {
 }
 
 function FieldInput({ ruleId, field, value, onEdit, onSave }) {
-  const { label, type } = FIELD_INPUTS[field];
+  const { label, type, options } = FIELD_INPUTS[field];
   const id = `fix-${ruleId}-${field}`;
   return (
     <div>
@@ -27,14 +35,25 @@ function FieldInput({ ruleId, field, value, onEdit, onSave }) {
       >
         {label}
       </label>
-      <input
-        id={id}
-        type={type}
-        value={value ?? ""}
-        onChange={(e) => onEdit(field, e.target.value)}
-        onKeyDown={submitOnEnter(onSave)}
-        className={INPUT_CLASS}
-      />
+      {type === "select" ? (
+        <select id={id} value={value ?? ""} onChange={(e) => onEdit(field, e.target.value)} className={INPUT_CLASS}>
+          <option value="">Select...</option>
+          {options.map((opt) => (
+            <option key={opt} value={opt}>
+              {opt}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <input
+          id={id}
+          type={type}
+          value={value ?? ""}
+          onChange={(e) => onEdit(field, e.target.value)}
+          onKeyDown={submitOnEnter(onSave)}
+          className={INPUT_CLASS}
+        />
+      )}
     </div>
   );
 }
@@ -50,11 +69,12 @@ FieldInput.propTypes = {
 function ItemsEditor({ items, onEdit, onSave }) {
   const rows = Array.isArray(items) ? items : [];
   const update = (index, key, raw) => {
-    const value = key === "quantity" || key === "unit_price" ? Number(raw) : raw;
+    const numeric = key === "quantity" || key === "unit_price" || key === "sequence";
+    const value = numeric ? (raw === "" ? "" : Number(raw)) : raw;
     onEdit("items", rows.map((item, i) => (i === index ? { ...item, [key]: value } : item)));
   };
   const remove = (index) => onEdit("items", rows.filter((_, i) => i !== index));
-  const add = () => onEdit("items", [...rows, { ...EMPTY_ITEM }]);
+  const add = () => onEdit("items", [...rows, { ...EMPTY_ITEM, sequence: rows.length + 1 }]);
 
   return (
     <div>
@@ -62,53 +82,90 @@ function ItemsEditor({ items, onEdit, onSave }) {
         Service items
       </p>
       <div className="space-y-2">
-        {rows.map((item, index) => (
-          // Index key: items have no id of their own.
-          <div key={index} className="grid grid-cols-12 gap-1.5 items-center">
-            <input
-              aria-label={`Item ${index + 1} service code`}
-              placeholder="Service code"
-              value={item.service_code ?? ""}
-              onChange={(e) => update(index, "service_code", e.target.value)}
-              onKeyDown={submitOnEnter(onSave)}
-              className={`${INPUT_CLASS} col-span-3 ${item.service_code ? "" : "ring-2 ring-red-400"}`}
-            />
-            <input
-              aria-label={`Item ${index + 1} description`}
-              placeholder="Description"
-              value={item.description ?? ""}
-              onChange={(e) => update(index, "description", e.target.value)}
-              onKeyDown={submitOnEnter(onSave)}
-              className={`${INPUT_CLASS} col-span-4`}
-            />
-            <input
-              aria-label={`Item ${index + 1} quantity`}
-              type="number"
-              min="1"
-              value={item.quantity ?? 1}
-              onChange={(e) => update(index, "quantity", e.target.value)}
-              onKeyDown={submitOnEnter(onSave)}
-              className={`${INPUT_CLASS} col-span-2`}
-            />
-            <input
-              aria-label={`Item ${index + 1} unit price`}
-              type="number"
-              min="0"
-              value={item.unit_price ?? 0}
-              onChange={(e) => update(index, "unit_price", e.target.value)}
-              onKeyDown={submitOnEnter(onSave)}
-              className={`${INPUT_CLASS} col-span-2`}
-            />
-            <button
-              type="button"
-              onClick={() => remove(index)}
-              aria-label={`Remove item ${index + 1}`}
-              className="col-span-1 text-slate-400 hover:text-red-600 text-sm font-bold"
-            >
-              ×
-            </button>
-          </div>
-        ))}
+        {rows.map((item, index) => {
+          const label = (what) => `Item ${index + 1} ${what}`;
+          const onKeyDown = submitOnEnter(onSave);
+          return (
+            // Index key: items have no id of their own.
+            <div key={index} className="rounded-lg border border-slate-200 dark:border-slate-800 p-2 space-y-1.5">
+              <div className="grid grid-cols-12 gap-1.5 items-center">
+                <input
+                  aria-label={label("sequence")}
+                  title="Sequence"
+                  type="number"
+                  min="1"
+                  value={item.sequence ?? ""}
+                  onChange={(e) => update(index, "sequence", e.target.value)}
+                  onKeyDown={onKeyDown}
+                  className={`${INPUT_CLASS} col-span-2`}
+                />
+                <input
+                  aria-label={label("intervention code")}
+                  placeholder="SHA-12-001"
+                  value={item.service_code ?? ""}
+                  onChange={(e) => update(index, "service_code", e.target.value.toUpperCase())}
+                  onKeyDown={onKeyDown}
+                  className={`${INPUT_CLASS} col-span-4 font-mono ${item.service_code ? "" : "ring-2 ring-red-400"}`}
+                />
+                <input
+                  aria-label={label("description")}
+                  placeholder="Description"
+                  value={item.description ?? ""}
+                  onChange={(e) => update(index, "description", e.target.value)}
+                  onKeyDown={onKeyDown}
+                  className={`${INPUT_CLASS} col-span-5`}
+                />
+                <button
+                  type="button"
+                  onClick={() => remove(index)}
+                  aria-label={`Remove item ${index + 1}`}
+                  className="col-span-1 text-slate-400 hover:text-red-600 text-sm font-bold"
+                >
+                  ×
+                </button>
+              </div>
+              <div className="grid grid-cols-12 gap-1.5 items-center">
+                <input
+                  aria-label={label("quantity")}
+                  title="Quantity"
+                  type="number"
+                  min="1"
+                  value={item.quantity ?? 1}
+                  onChange={(e) => update(index, "quantity", e.target.value)}
+                  onKeyDown={onKeyDown}
+                  className={`${INPUT_CLASS} col-span-2`}
+                />
+                <input
+                  aria-label={label("unit price")}
+                  title="Unit price (KES)"
+                  type="number"
+                  min="0"
+                  value={item.unit_price ?? 0}
+                  onChange={(e) => update(index, "unit_price", e.target.value)}
+                  onKeyDown={onKeyDown}
+                  className={`${INPUT_CLASS} col-span-3`}
+                />
+                <input
+                  aria-label={label("service start date")}
+                  title="Service start"
+                  type="date"
+                  value={(item.service_start ?? "").slice(0, 10)}
+                  onChange={(e) => update(index, "service_start", e.target.value)}
+                  className={`${INPUT_CLASS} col-span-3 ${item.service_start ? "" : "ring-2 ring-red-400"}`}
+                />
+                <span className="col-span-1 text-center text-[10px] text-slate-400">to</span>
+                <input
+                  aria-label={label("service end date")}
+                  title="Service end"
+                  type="date"
+                  value={(item.service_end ?? "").slice(0, 10)}
+                  onChange={(e) => update(index, "service_end", e.target.value)}
+                  className={`${INPUT_CLASS} col-span-3 ${item.service_end ? "" : "ring-2 ring-red-400"}`}
+                />
+              </div>
+            </div>
+          );
+        })}
       </div>
       <button
         type="button"
@@ -137,6 +194,7 @@ export default function ErrorCard({ result, explanation, claim, onEdit, onApplyF
     fields,
     suggestion,
     suggested_value: suggestedValue,
+    suggested_label: suggestedLabel,
   } = result;
 
   const style = passed ? PASS_STYLE : SEVERITY_STYLES[severity] ?? SEVERITY_STYLES.error;
@@ -191,8 +249,14 @@ export default function ErrorCard({ result, explanation, claim, onEdit, onApplyF
                   Suggested fix
                 </p>
                 <p className="mt-1 text-xs font-semibold text-slate-700 dark:text-slate-200 break-words">
-                  Set {FIELD_INPUTS[editableFields[0]].label.toLowerCase()} to{" "}
-                  <span className="font-mono font-bold">{String(suggestedValue)}</span>
+                  {typeof suggestedValue === "object" ? (
+                    <>{suggestedLabel ? suggestedLabel[0].toUpperCase() + suggestedLabel.slice(1) : "Apply the suggested correction"}</>
+                  ) : (
+                    <>
+                      Set {FIELD_INPUTS[editableFields[0]].label.toLowerCase()} to{" "}
+                      <span className="font-mono font-bold">{String(suggestedValue)}</span>
+                    </>
+                  )}
                 </p>
               </div>
               <button
@@ -242,7 +306,8 @@ ErrorCard.propTypes = {
     field: PropTypes.string,
     fields: PropTypes.arrayOf(PropTypes.string),
     suggestion: PropTypes.string,
-    suggested_value: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+    suggested_value: PropTypes.oneOfType([PropTypes.string, PropTypes.number, PropTypes.array]),
+    suggested_label: PropTypes.string,
   }).isRequired,
   explanation: PropTypes.string,
   claim: PropTypes.object,

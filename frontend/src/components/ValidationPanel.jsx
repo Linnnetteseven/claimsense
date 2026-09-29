@@ -74,8 +74,8 @@ function ClaimWorkspace({ claim, onValidationComplete }) {
     setTimeout(() => {
       setScanState("done");
       setExtractedData({
-        diagnosis_code: "A09",
-        diagnosis_description: "Diarrhoea and gastroenteritis of infectious origin",
+        diagnosis_code: "1A40",
+        diagnosis_description: "Gastroenteritis or colitis without specification of infectious agent",
         visit_date: "2026-07-02",
         claimed_amount: 8500,
       });
@@ -234,7 +234,7 @@ function ClaimWorkspace({ claim, onValidationComplete }) {
                     <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-teal-400 to-emerald-500 animate-[pulse_1.5s_infinite] shadow-lg shadow-teal-500" />
                     <SpinnerIcon className="w-8 h-8 text-teal-600 mb-2" />
                     <p className="text-xs font-semibold text-slate-700 dark:text-slate-200">AI Model Extracting & Processing Invoice Data...</p>
-                    <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">Reading fields, verification with ICD-10 registry</p>
+                    <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">Reading fields, verification with ICD-11</p>
                   </div>
                 )}
 
@@ -249,7 +249,7 @@ function ClaimWorkspace({ claim, onValidationComplete }) {
                     </div>
                     <div className="grid grid-cols-2 gap-3 mb-4 bg-white dark:bg-slate-950 p-3 rounded-lg border border-slate-100 dark:border-slate-850 text-xs">
                       <div>
-                        <span className="text-slate-400 dark:text-slate-500 block mb-0.5">ICD-10 Diagnosis</span>
+                        <span className="text-slate-400 dark:text-slate-500 block mb-0.5">ICD-11 Diagnosis</span>
                         <strong className="text-slate-700 dark:text-slate-200 font-semibold">{extractedData.diagnosis_code} - {extractedData.diagnosis_description}</strong>
                       </div>
                       <div>
