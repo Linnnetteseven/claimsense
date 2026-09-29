@@ -44,6 +44,13 @@ class _Config:
         "",
     )
 
+    # Explanations only; the score never depends on Gemini. Flash-lite answered fastest
+    # and most reliably in testing (Sep 2026); the fallback is tried once on failure.
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
+    GEMINI_FALLBACK_MODEL: str = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-3.1-flash-lite")
+    # The Gemini API rejects deadlines under 10 s.
+    GEMINI_TIMEOUT_SECONDS: float = max(10.0, float(os.getenv("GEMINI_TIMEOUT_SECONDS", "10")))
+
     # ---------------------------------------------------------
     # Supabase
     # ---------------------------------------------------------

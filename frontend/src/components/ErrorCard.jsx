@@ -184,7 +184,7 @@ ItemsEditor.propTypes = {
   onSave: PropTypes.func,
 };
 
-export default function ErrorCard({ result, explanation, claim, onEdit, onApplyFix, onSave, busy }) {
+export default function ErrorCard({ result, explanation, fixSteps, claim, onEdit, onApplyFix, onSave, busy }) {
   const {
     passed,
     severity = "error",
@@ -240,6 +240,14 @@ export default function ErrorCard({ result, explanation, claim, onEdit, onApplyF
 
           {!passed && advice && (
             <p className="mt-2 text-xs leading-5 text-slate-600 dark:text-slate-400">{advice}</p>
+          )}
+
+          {!passed && fixSteps?.length > 0 && (
+            <ol className="mt-2 list-decimal pl-5 space-y-0.5 text-xs leading-5 text-slate-600 dark:text-slate-400">
+              {fixSteps.map((step) => (
+                <li key={step}>{step}</li>
+              ))}
+            </ol>
           )}
 
           {canApply && (
@@ -310,6 +318,7 @@ ErrorCard.propTypes = {
     suggested_label: PropTypes.string,
   }).isRequired,
   explanation: PropTypes.string,
+  fixSteps: PropTypes.arrayOf(PropTypes.string),
   claim: PropTypes.object,
   onEdit: PropTypes.func,
   onApplyFix: PropTypes.func,

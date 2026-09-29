@@ -55,7 +55,11 @@ async def lifespan(app: FastAPI):
     logger.info("ClaimSense starting")
     logger.info("openIMIS: %s", config.OPENIMIS_URL)
     logger.info("Mode: %s", "MOCK" if config.use_mock else "LIVE")
-    logger.info("LLM: %s", "enabled" if config.llm_enabled else "disabled — set GEMINI_API_KEY")
+    logger.info(
+        "LLM: %s",
+        f"{config.GEMINI_MODEL} (fallback {config.GEMINI_FALLBACK_MODEL})"
+        if config.llm_enabled else "disabled, set GEMINI_API_KEY",
+    )
     logger.info("=" * 50)
     yield
 
@@ -109,8 +113,9 @@ def full_pipeline(claim: dict) -> dict:
     Returns everything the frontend needs in one response.
     """
     result = validate(claim)
-    explanations, ai_used = explain_errors(result["errors"], claim)
-    result["explanations"] = explanations
+    explained, ai_used = explain_errors(result["errors"] + result["warnings"], claim)
+    result["explanations"] = {rule_id: e["text"] for rule_id, e in explained.items()}
+    result["fix_steps"] = {rule_id: e["fix_steps"] for rule_id, e in explained.items() if e["fix_steps"]}
     result["ai_explanations_used"] = ai_used
     result["fhir_claim_response"] = build_claim_response(claim, result)
     try:
@@ -130,7 +135,7 @@ async def health_check():
         "service": "ClaimSense",
         "status": "running",
         "mode": "mock" if config.use_mock else "live",
-        "llm": "enabled" if config.llm_enabled else "disabled",
+        "llm": config.GEMINI_MODEL if config.llm_enabled else "disabled",
         "openimis_url": config.OPENIMIS_URL,
     }
 

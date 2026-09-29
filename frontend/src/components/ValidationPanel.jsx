@@ -411,6 +411,7 @@ function ClaimWorkspace({ claim, onValidationComplete }) {
                           key={result.rule_id}
                           result={result}
                           explanation={validation.explanations?.[result.rule_id]}
+                          fixSteps={validation.fix_steps?.[result.rule_id]}
                           claim={workingClaim}
                           onEdit={editField}
                           onApplyFix={applyFix}
