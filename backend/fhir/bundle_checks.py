@@ -14,6 +14,8 @@ check_bundle() returns a list of BundleIssue; empty means the bundle passed.
 from dataclasses import dataclass, field
 from typing import Iterator
 
+from config import config
+
 REQUIRED_TYPES = ("Claim", "Patient", "Coverage", "Organization", "Practitioner")
 
 
@@ -40,10 +42,12 @@ def check_bundle(bundle: dict) -> list[BundleIssue]:
     issues: list[BundleIssue] = []
     entries = bundle.get("entry") or []
 
+    if config.SHA_BUNDLE_MESSAGE_HEADER and (
+        not entries or (entries[0].get("resource") or {}).get("resourceType") != "MessageHeader"
+    ):
+        issues.append(BundleIssue("MESSAGE_HEADER", "A message Bundle must start with a MessageHeader"))
     if bundle.get("type") != "message":
         issues.append(BundleIssue("BUNDLE_TYPE", f'Bundle.type is "{bundle.get("type")}", SHA expects "message"'))
-    if not entries or (entries[0].get("resource") or {}).get("resourceType") != "MessageHeader":
-        issues.append(BundleIssue("MESSAGE_HEADER", "A message Bundle must start with a MessageHeader"))
 
     missing_full_url = [i for i, e in enumerate(entries) if not e.get("fullUrl")]
     if missing_full_url:

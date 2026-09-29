@@ -89,6 +89,20 @@ class _Config:
         "https://nshr-uat.sha.go.ke/fhir",
     ).rstrip("/")
 
+    # Diagnosis code system name under SHA_TERMINOLOGY_BASE. The IG examples use
+    # icd11-codes-cs; nshr-uat also hosts the same list as ClaimDiagnosisCodeableConceptCS.
+    SHA_DIAGNOSIS_SYSTEM: str = os.getenv("SHA_DIAGNOSIS_SYSTEM", "icd11-codes-cs")
+
+    # FHIR requires a MessageHeader in a message Bundle (bdl-12); with it, demo bundles pass
+    # UAT $validate with no errors. SHA's example mediator request omits it; set false to match.
+    SHA_BUNDLE_MESSAGE_HEADER: bool = _env_bool("SHA_BUNDLE_MESSAGE_HEADER", default=True)
+
+    # AfyaLink (SHR mediator) submission. Credentials are issued to facilities.
+    AFYALINK_URL: str = os.getenv("AFYALINK_URL", "https://uat.dha.go.ke").rstrip("/")
+    AFYALINK_USERNAME: str = os.getenv("AFYALINK_USERNAME", "")
+    AFYALINK_PASSWORD: str = os.getenv("AFYALINK_PASSWORD", "")
+    AFYALINK_CONSUMER_KEY: str = os.getenv("AFYALINK_CONSUMER_KEY", "")
+
     SHA_FHIR_TIMEOUT: float = float(
         os.getenv(
             "SHA_FHIR_TIMEOUT",

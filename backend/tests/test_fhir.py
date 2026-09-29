@@ -41,6 +41,20 @@ def test_bundle_shape():
     assert len({e["fullUrl"] for e in bundle["entry"]}) == len(bundle["entry"])
 
 
+def test_message_header_can_be_switched_off(monkeypatch):
+    monkeypatch.setattr(config, "SHA_BUNDLE_MESSAGE_HEADER", False)
+    bundle = build_kenya_eclaims_bundle(_demo())
+    assert "MessageHeader" not in [e["resource"]["resourceType"] for e in bundle["entry"]]
+    assert check_bundle(bundle) == []
+
+
+def test_missing_values_are_omitted_not_empty():
+    claim = _resource(build_kenya_eclaims_bundle(_base_claim(items=[{"sequence": 1, "description": "x"}])), "Claim")
+    assert claim["item"][0]["productOrService"] == {"text": "x"}
+    patient = _resource(build_kenya_eclaims_bundle(_base_claim(patient_id="")), "Patient")
+    assert "identifier" not in patient
+
+
 def test_bundle_is_deterministic_per_claim():
     a, b = build_kenya_eclaims_bundle(_demo()), build_kenya_eclaims_bundle(_demo())
     assert [e["fullUrl"] for e in a["entry"]] == [e["fullUrl"] for e in b["entry"]]

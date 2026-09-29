@@ -5,17 +5,20 @@ Builds the provider-side submission Bundle from Hakiki's internal claim shape,
 following the AfyaLink claim integration guide and the DHA Kenya eClaims FHIR IG
 (KenyaClaimSubmission profile and its examples):
 
-  - Bundle.type "message", MessageHeader first (required by FHIR for messages)
+  - Bundle.type "message" with a MessageHeader first (FHIR bdl-12). Checked against SHA UAT
+    $validate: no errors (scripts/uat_validate.py). SHA's own example request for the SHR
+    mediator (POST /v1/shr-med/post-bundle) omits the MessageHeader and SHA has published no
+    event code; SHA_BUNDLE_MESSAGE_HEADER=false drops it if the mediator rejects it.
   - fullUrl on every entry; every reference points at a fullUrl in the Bundle
   - Claim, Patient, Coverage, provider and insurer Organization, Practitioner
   - Claim.insurance -> Coverage, Claim.careTeam -> Practitioner
   - items with sequence, servicedPeriod, category, net and SHA intervention codes
   - diagnosis coded with the ICD-11 code system
 
-Code system and identifier URLs are built from SHA_TERMINOLOGY_BASE (UAT prefix by default).
-Not confirmed against SHA UAT: the MessageHeader event code, and whether UAT expects
-Encounter/Condition resources as well. Run fhir.bundle_checks.check_bundle() before
-submitting.
+Code system and identifier URLs are built from SHA_TERMINOLOGY_BASE (UAT prefix by default);
+they match the code systems hosted on nshr-uat.sha.go.ke. The diagnosis system is
+SHA_DIAGNOSIS_SYSTEM (IG example: icd11-codes-cs). Run fhir.bundle_checks.check_bundle()
+before handing the bundle on.
 
 It does not invent patient demographics or coverage details; missing inputs leave
 the matching elements out so bundle_checks and the validation rules report them.
@@ -25,6 +28,7 @@ from datetime import datetime, timezone
 from uuid import NAMESPACE_URL, uuid5
 
 from config import config
+from data.sha_tariffs import get_intervention
 from validation.rules import billable_period, item_net, net_total
 
 HL7 = "http://terminology.hl7.org/CodeSystem"
@@ -155,13 +159,21 @@ def build_kenya_eclaims_bundle(claim: dict) -> dict:
     # --- Claim -------------------------------------------------------------
     items = []
     for item in claim.get("items") or []:
+        code = str(item.get("service_code", "")).strip().upper()
+        official = get_intervention(code)
+        # Display must be SHA's name for the code (UAT warns otherwise); the facility's own
+        # wording goes in text.
+        # A missing code is left out rather than sent empty (FHIR rejects empty values).
+        product = _coding(
+            code_system("KenyaSocialHealthAuthorityInterventionCS"),
+            code,
+            official.description if official else "",
+        ) if code else {}
+        if item.get("description"):
+            product["text"] = item["description"]
         entry = {
             "sequence": item.get("sequence"),
-            "productOrService": _coding(
-                code_system("KenyaSocialHealthAuthorityInterventionCS"),
-                str(item.get("service_code", "")),
-                item.get("description", ""),
-            ),
+            "productOrService": product,
             "category": _coding(f"{HL7}/ex-benefitcategory", "1", "Medical Care"),
             "quantity": {"value": float(item.get("quantity") or 0)},
             "unitPrice": _money(item.get("unit_price")),
@@ -212,7 +224,7 @@ def build_kenya_eclaims_bundle(claim: dict) -> dict:
         claim_resource["diagnosis"] = [{
             "sequence": 1,
             "diagnosisCodeableConcept": _coding(
-                code_system("icd11-codes-cs"),
+                code_system(config.SHA_DIAGNOSIS_SYSTEM),
                 str(claim["diagnosis_code"]).strip().upper(),
                 claim.get("diagnosis_description", ""),
             ),
@@ -220,18 +232,18 @@ def build_kenya_eclaims_bundle(claim: dict) -> dict:
     if claim.get("preauth_ref"):
         claim_resource["insurance"][0]["preAuthRef"] = [str(claim["preauth_ref"])]
 
-    # --- MessageHeader + Bundle -------------------------------------------
-    header = {
-        "resourceType": "MessageHeader",
-        # Event code not confirmed against SHA UAT.
-        "eventCoding": {"system": code_system("message-event"), "code": "claim-submission"},
-        "source": {"endpoint": f"urn:hakiki:facility:{claim.get('facility_code') or 'unknown'}"},
-        "sender": _ref(urls["provider"]),
-        "focus": [_ref(urls["claim"])],
-    }
-
-    resources = [
-        ("header", header),
+    # --- Bundle ------------------------------------------------------------
+    resources = []
+    if config.SHA_BUNDLE_MESSAGE_HEADER:
+        resources.append(("header", {
+            "resourceType": "MessageHeader",
+            # SHA has not published a message event code; this one is Hakiki's own.
+            "eventCoding": {"system": code_system("message-event"), "code": "claim-submission"},
+            "source": {"endpoint": f"urn:hakiki:facility:{claim.get('facility_code') or 'unknown'}"},
+            "sender": _ref(urls["provider"]),
+            "focus": [_ref(urls["claim"])],
+        }))
+    resources += [
         ("claim", claim_resource),
         ("patient", patient),
         ("coverage", coverage),
@@ -240,6 +252,11 @@ def build_kenya_eclaims_bundle(claim: dict) -> dict:
     ]
     if practitioner:
         resources.append(("practitioner", practitioner))
+
+    for _, resource in resources:
+        # FHIR rejects empty arrays; drop any left empty by missing claim data.
+        for key in [k for k, v in resource.items() if v == []]:
+            del resource[key]
 
     entries = []
     for kind, resource in resources:
