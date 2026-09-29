@@ -38,6 +38,7 @@ from fhir.bundle_checks import check_bundle
 from fhir.kenya_bundle_builder import build_kenya_eclaims_bundle
 from his import handoff as his_handoff
 from llm.explainer import explain_errors
+from suggest.enrich import apply as suggest_apply, plan as suggest_plan
 from repositories.claims import ClaimsRepository
 from audit import chain
 
@@ -113,7 +114,10 @@ def full_pipeline(claim: dict) -> dict:
     Returns everything the frontend needs in one response.
     """
     result = validate(claim)
-    explained, ai_used = explain_errors(result["errors"] + result["warnings"], claim)
+    # Suggestions: a validated shortlist per rule; Gemini may pick, the rules re-check.
+    targets = suggest_plan(result, claim)
+    explained, ai_used = explain_errors(result["errors"] + result["warnings"], claim, targets)
+    suggest_apply(result, claim, targets, {r: e["pick"] for r, e in explained.items() if e.get("pick")})
     result["explanations"] = {rule_id: e["text"] for rule_id, e in explained.items()}
     result["fix_steps"] = {rule_id: e["fix_steps"] for rule_id, e in explained.items() if e["fix_steps"]}
     result["ai_explanations_used"] = ai_used

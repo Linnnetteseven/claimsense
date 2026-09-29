@@ -32,6 +32,9 @@ class Explanation(BaseModel):
     rule_id: str
     plain_explanation: str
     fix_steps: list[str]
+    # Only for rules offered a list of choices: one code copied from that list, or empty.
+    pick_code: Optional[str] = None
+    pick_reason: Optional[str] = None
 
 
 def _get_client():
@@ -68,7 +71,10 @@ def claim_context(claim: dict) -> str:
     return "\n".join(line for line in lines if line)
 
 
-def build_prompt(errors: list[dict], claim: dict) -> str:
+def build_prompt(errors: list[dict], claim: dict, targets: Optional[dict] = None) -> str:
+    from suggest.enrich import candidate_block
+
+    choices = candidate_block(targets or {})
     failures = "\n".join(
         f'- rule_id="{e["rule_id"]}" | problem="{e["message"]}" | rule advice="{e["suggestion"]}"'
         for e in errors
@@ -77,14 +83,20 @@ def build_prompt(errors: list[dict], claim: dict) -> str:
 
 For each failed check below, explain in plain language a non-technical clerk can act on:
 - plain_explanation: 1-2 sentences on what is wrong and why SHA cares.
-- fix_steps: 1-3 short, concrete steps.
-Only use the facts given. Do not invent rules, limits, codes or amounts. No FHIR or coding jargon.
+- fix_steps: 1-3 short steps that say exactly what to type or select and in which box
+  (for example: "In item 1, type SHA-12-001 in the intervention code box").
+- pick_code / pick_reason: only for checks listed under Choices. Copy exactly one code from
+  that list that best fits the claim, with a one-sentence reason, or leave both empty if none
+  fits. Never suggest a code that is not in the list.
+Only use the facts given. Do not invent rules, limits, codes, prices or amounts. No FHIR jargon.
 
 Claim context (no patient details are shared):
 {claim_context(claim)}
 
 Failed checks:
 {failures}
+
+{choices}
 
 Return one entry per rule_id."""
 
@@ -93,8 +105,8 @@ def _fallback(error: dict) -> dict:
     return {"text": error["suggestion"], "fix_steps": []}
 
 
-def _ask_gemini(client, errors: list[dict], claim: dict) -> Optional[dict[str, Explanation]]:
-    prompt = build_prompt(errors, claim)
+def _ask_gemini(client, errors: list[dict], claim: dict, targets=None) -> Optional[dict[str, Explanation]]:
+    prompt = build_prompt(errors, claim, targets)
     config_ = types.GenerateContentConfig(
         response_mime_type="application/json",
         response_schema=list[Explanation],
@@ -112,18 +124,25 @@ def _ask_gemini(client, errors: list[dict], claim: dict) -> Optional[dict[str, E
     return None
 
 
-def explain_errors(errors: list[dict], claim: dict) -> tuple[dict[str, dict], bool]:
+def explain_errors(errors: list[dict], claim: dict, targets: Optional[dict] = None) -> tuple[dict[str, dict], bool]:
     """
-    Returns ({rule_id: {"text": str, "fix_steps": [str]}}, ai_used).
-    ai_used is True only if every explanation came from Gemini (now or from the cache).
+    Returns ({rule_id: {"text": str, "fix_steps": [str], "pick": {"code", "reason"}?}}, ai_used).
+    targets (suggest/enrich.py) adds a validated list of choices for some rules; Gemini may
+    pick one. ai_used is True only if every explanation came from Gemini (now or cached).
     """
+    from suggest.enrich import cache_suffix
+
     if not errors:
         return {}, False
+    targets = targets or {}
+
+    def key(error):
+        return cache.key_for(error["rule_id"], error["message"] + cache_suffix(targets.get(error["rule_id"])))
 
     explanations: dict[str, dict] = {}
     missing = []
     for error in errors:
-        hit = cache.get(cache.key_for(error["rule_id"], error["message"]))
+        hit = cache.get(key(error))
         if hit:
             explanations[error["rule_id"]] = hit
         else:
@@ -132,12 +151,14 @@ def explain_errors(errors: list[dict], claim: dict) -> tuple[dict[str, dict], bo
     ai_used = True
     if missing:
         client = _get_client()
-        answers = _ask_gemini(client, missing, claim) if client else None
+        answers = _ask_gemini(client, missing, claim, targets) if client else None
         for error in missing:
             answer = (answers or {}).get(error["rule_id"])
             if answer:
                 value = {"text": answer.plain_explanation, "fix_steps": answer.fix_steps}
-                cache.put(cache.key_for(error["rule_id"], error["message"]), value)
+                if answer.pick_code:
+                    value["pick"] = {"code": answer.pick_code.strip().upper(), "reason": answer.pick_reason or ""}
+                cache.put(key(error), value)
                 explanations[error["rule_id"]] = value
             else:
                 explanations[error["rule_id"]] = _fallback(error)

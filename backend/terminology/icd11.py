@@ -129,3 +129,60 @@ def lookup(code: str) -> Optional[bool]:
 
 def lookup_release() -> str:
     return f"release {config.ICD_API_RELEASE}"
+
+
+# ---------------------------------------------------------------------------
+# Offline WHO ICD-11 data (see scripts/fetch_icd_mappings.py)
+# ---------------------------------------------------------------------------
+
+from functools import lru_cache  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+_DATA = Path(__file__).resolve().parent.parent / "data"
+
+
+def _read_tsv(name: str) -> list[list[str]]:
+    with (_DATA / name).open(encoding="utf-8") as fh:
+        lines = [line.rstrip("\n").split("\t") for line in fh if not line.startswith("#")]
+    return lines[1:]  # skip the header row
+
+
+@lru_cache(maxsize=1)
+def _titles() -> dict[str, str]:
+    return {code: title for code, title in _read_tsv("icd11_mms.tsv")}
+
+
+@lru_cache(maxsize=1)
+def _icd10_map() -> dict[str, tuple[str, str]]:
+    return {icd10: (icd11, title) for icd10, icd11, title in _read_tsv("icd10_to_icd11.tsv")}
+
+
+def title(code: str) -> Optional[str]:
+    """WHO title for an ICD-11 MMS stem code, or None if it is not in the release."""
+    return _titles().get(str(code).strip().upper())
+
+
+def unknown_parts(code: str) -> list[str]:
+    """Stem codes in the cluster that are not in the WHO ICD-11 release (extension codes are not listed)."""
+    return [p for p in parts(code) if not p.startswith("X") and p not in _titles()]
+
+
+def from_icd10(code: str) -> Optional[tuple[str, str]]:
+    """(ICD-11 code, title) from WHO's one-category map; falls back to the parent ICD-10 category."""
+    code = str(code).strip().upper()
+    mapping = _icd10_map()
+    return mapping.get(code) or mapping.get(code.split(".")[0])
+
+
+def search(text: str, limit: int = 8) -> list[tuple[str, str]]:
+    """ICD-11 codes whose title shares the most words with text. A shortlist, not a coder."""
+    words = {w for w in re.findall(r"[a-z]{4,}", str(text).lower())}
+    if not words:
+        return []
+    scored = []
+    for code, t in _titles().items():
+        overlap = len(words & set(re.findall(r"[a-z]{4,}", t.lower())))
+        if overlap:
+            # Prefer more overlap, then shorter (more general) titles.
+            scored.append((-overlap, len(t), code, t))
+    return [(code, t) for _, _, code, t in sorted(scored)[:limit]]

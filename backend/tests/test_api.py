@@ -60,7 +60,7 @@ class FakeRepository:
 def client(monkeypatch):
     repo = FakeRepository()
     monkeypatch.setattr(main, "claims_repository", lambda: repo)
-    monkeypatch.setattr(main, "explain_errors", lambda errors, claim: ({}, False))
+    monkeypatch.setattr(main, "explain_errors", lambda errors, claim, targets=None: ({}, False))
     monkeypatch.setattr(main.config, "DEMO_RESET_ENABLED", True)
     return TestClient(main.app), repo
 

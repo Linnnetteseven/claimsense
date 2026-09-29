@@ -37,6 +37,10 @@ class Finding:
     fields: Optional[list[str]] = None        # overrides the rule's default fields
     suggested_value: Optional[object] = None  # only when it can be computed exactly
     suggested_label: Optional[str] = None     # how to describe a non-scalar suggested_value
+    # Several fields to change at once, e.g. diagnosis code and description. Takes the
+    # place of suggested_value when set.
+    suggested_changes: Optional[dict] = None
+    suggestion_source: Optional[str] = None   # where the suggestion came from, shown to the officer
 
 
 @dataclass(frozen=True)
@@ -64,6 +68,8 @@ class RuleResult:
     rule_version: str = ""
     source_url: Optional[str] = None
     source_label: str = ""
+    suggested_changes: Optional[dict] = None
+    suggestion_source: Optional[str] = None
 
     def to_dict(self) -> dict:
         out = {
@@ -80,8 +86,12 @@ class RuleResult:
         }
         if self.suggested_value is not None:
             out["suggested_value"] = self.suggested_value
-            if self.suggested_label:
-                out["suggested_label"] = self.suggested_label
+        if self.suggested_changes:
+            out["suggested_changes"] = self.suggested_changes
+        if self.suggested_label and (self.suggested_value is not None or self.suggested_changes):
+            out["suggested_label"] = self.suggested_label
+        if self.suggestion_source:
+            out["suggestion_source"] = self.suggestion_source
         return out
 
 
@@ -98,6 +108,7 @@ def run_rule(rule: "Rule", claim: dict) -> RuleResult:
         finding.message, finding.suggestion, fields,
         finding.suggested_value, finding.suggested_label,
         rule.version, rule.source_url, rule.source_label,
+        finding.suggested_changes, finding.suggestion_source,
     )
 
 
@@ -190,16 +201,33 @@ def check_icd11(claim: dict) -> Optional[Finding]:
         return None  # reported by MISSING_FIELDS
     reason = icd11.format_error(code)
     if reason and icd11.looks_like_icd10(code):
-        return Finding(
+        finding = Finding(
             f'"{code}" looks like an ICD-10 code. SHA requires ICD-11 on every claim',
             "Find the matching ICD-11 code in the WHO ICD-11 browser (for example pneumonia "
             "is CA40.Z in ICD-11, J18.9 in ICD-10) and enter that instead.",
         )
+        mapped = icd11.from_icd10(code)
+        if mapped:
+            new_code, new_title = mapped
+            finding.suggestion = (
+                f"WHO's official ICD-10 to ICD-11 map gives {new_code} ({new_title}) for {code}. "
+                "Use it, or a more specific ICD-11 code if the notes support one."
+            )
+            finding.suggested_changes = {"diagnosis_code": new_code, "diagnosis_description": new_title}
+            finding.suggested_label = f"use ICD-11 {new_code}: {new_title}"
+            finding.suggestion_source = "WHO ICD-10 to ICD-11 map"
+        return finding
     if reason:
         return Finding(
             f'"{code}" is not a valid ICD-11 code: {reason}',
             "ICD-11 codes look like 1A00, CA40.Z or DB10.02 and never use the letters I or O. "
             "Check the WHO ICD-11 browser.",
+        )
+    missing = icd11.unknown_parts(code)
+    if missing:
+        return Finding(
+            f'"{code}" has a valid ICD-11 format but {", ".join(missing)} is not in the WHO ICD-11 release',
+            "Check the code in the WHO ICD-11 browser; it may be a typo or a retired code.",
         )
     if icd11.lookup(code) is False:
         return Finding(

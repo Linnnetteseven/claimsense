@@ -195,18 +195,23 @@ export default function ErrorCard({ result, explanation, fixSteps, claim, onEdit
     suggestion,
     suggested_value: suggestedValue,
     suggested_label: suggestedLabel,
+    suggested_changes: suggestedChanges,
+    suggestion_source: suggestionSource,
+    suggestion_reason: suggestionReason,
+    suggestion_note: suggestionNote,
   } = result;
 
   const style = passed ? PASS_STYLE : SEVERITY_STYLES[severity] ?? SEVERITY_STYLES.error;
   const editableFields = (fields ?? (field ? [field] : [])).filter((f) => FIELD_INPUTS[f]);
   const canEdit = !passed && Boolean(onEdit) && editableFields.length > 0;
-  // Only offer one-click apply for a concrete value computed by the backend rule.
-  const canApply =
-    canEdit &&
-    Boolean(onApplyFix) &&
-    suggestedValue !== undefined &&
-    suggestedValue !== null &&
-    editableFields.length === 1;
+  // One-click apply only for concrete changes computed or validated by the backend.
+  const changes =
+    suggestedChanges ??
+    (suggestedValue !== undefined && suggestedValue !== null && editableFields.length === 1
+      ? { [editableFields[0]]: suggestedValue }
+      : null);
+  const canApply = !passed && Boolean(onApplyFix) && Boolean(changes);
+  const aiPicked = suggestionSource?.startsWith("Gemini");
   const advice = explanation || suggestion;
 
   return (
@@ -242,6 +247,12 @@ export default function ErrorCard({ result, explanation, fixSteps, claim, onEdit
             <p className="mt-2 text-xs leading-5 text-slate-600 dark:text-slate-400">{advice}</p>
           )}
 
+          {!passed && suggestionNote && (
+            <p className="mt-2 rounded-lg border border-amber-200 dark:border-amber-900/40 bg-amber-50 dark:bg-amber-950/20 p-2.5 text-xs leading-5 text-amber-800 dark:text-amber-300">
+              {suggestionNote}
+            </p>
+          )}
+
           {!passed && fixSteps?.length > 0 && (
             <ol className="mt-2 list-decimal pl-5 space-y-0.5 text-xs leading-5 text-slate-600 dark:text-slate-400">
               {fixSteps.map((step) => (
@@ -257,7 +268,7 @@ export default function ErrorCard({ result, explanation, fixSteps, claim, onEdit
                   Suggested fix
                 </p>
                 <p className="mt-1 text-xs font-semibold text-slate-700 dark:text-slate-200 break-words">
-                  {typeof suggestedValue === "object" ? (
+                  {suggestedChanges || typeof suggestedValue === "object" ? (
                     <>{suggestedLabel ? suggestedLabel[0].toUpperCase() + suggestedLabel.slice(1) : "Apply the suggested correction"}</>
                   ) : (
                     <>
@@ -266,11 +277,20 @@ export default function ErrorCard({ result, explanation, fixSteps, claim, onEdit
                     </>
                   )}
                 </p>
+                {suggestionReason && (
+                  <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">{suggestionReason}</p>
+                )}
+                {suggestionSource && (
+                  <p className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                    {suggestionSource}
+                    {aiPicked ? " · check before applying" : ""}
+                  </p>
+                )}
               </div>
               <button
                 type="button"
                 disabled={busy}
-                onClick={() => onApplyFix(editableFields[0], suggestedValue)}
+                onClick={() => onApplyFix(changes)}
                 className="shrink-0 rounded-lg bg-teal-600 hover:bg-teal-700 disabled:opacity-60 active:scale-95 text-white text-[11px] font-bold px-3 py-2 transition-all shadow-sm"
               >
                 Apply fix
@@ -316,6 +336,10 @@ ErrorCard.propTypes = {
     suggestion: PropTypes.string,
     suggested_value: PropTypes.oneOfType([PropTypes.string, PropTypes.number, PropTypes.array]),
     suggested_label: PropTypes.string,
+    suggested_changes: PropTypes.object,
+    suggestion_source: PropTypes.string,
+    suggestion_reason: PropTypes.string,
+    suggestion_note: PropTypes.string,
   }).isRequired,
   explanation: PropTypes.string,
   fixSteps: PropTypes.arrayOf(PropTypes.string),

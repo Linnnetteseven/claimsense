@@ -70,7 +70,9 @@ def main() -> int:
             "max_age": e.get("upper_age_limit") or "",
             **{f"tariff_l{l}": tariff(e.get(f"level_{l}_tariff")) for l in range(2, 7)},
             "preauth": ";".join(v for k, v in PREAUTH_FLAGS.items() if e.get(k) == "True"),
-            "diagnoses": ";".join(e.get("diagnosis_lists") or []),
+            # Union of both OCL fields: they disagree in places (SHA-16-001 lists QB95,
+            # rehabilitation, but its blocks field has QB94, care involving dialysis).
+            "diagnoses": ";".join(dict.fromkeys((e.get("diagnosis_lists") or []) + (e.get("diagnosis_blocks") or []))),
             "sample_tariff_kes": SAMPLE_TARIFFS.get(c["id"], ("", ""))[0],
             "sample_tariff_source": SAMPLE_TARIFFS.get(c["id"], ("", ""))[1],
         })

@@ -186,11 +186,11 @@ function makeClaim(index) {
     items.splice(0, items.length, item(1, "SHA-16-001", "Haemodialysis session", 1, 12000, visitDate));
     dischargeDate = undefined;
     claimedAmount = 12000;
-    diagnosisCode = "QB95.Z";
+    diagnosisCode = "QB94.1";
     fund = "SHIF";
     if (Math.floor(index / 24) % 2 === 1) preauthRef = `PA-${pad(index, 5)}`;
   }
-  const renal = diagnosisCode.startsWith("QB95");
+  const renal = diagnosisCode.startsWith("QB94");
 
   const dobYear = 1970 + (index % 40);
 
@@ -209,7 +209,7 @@ function makeClaim(index) {
     ...(dischargeDate ? { discharge_date: dischargeDate } : {}),
 
     diagnosis_code: diagnosisCode,
-    diagnosis_description: renal ? "Dependence on renal dialysis" : diagnosis.description,
+    diagnosis_description: renal ? "Care involving extracorporeal dialysis" : diagnosis.description,
     department: renal ? "renal" : diagnosis.department ?? (primaryCare ? "outpatient" : "medical"),
     ...(maternity ? { partograph_id: `PG-${pad(index + 1, 5)}` } : {}),
     fund,

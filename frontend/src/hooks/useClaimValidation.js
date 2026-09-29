@@ -89,8 +89,12 @@ export function useClaimValidation(claim, onUpdate) {
     [claimId, edits, onUpdate]
   );
 
+  // Apply a suggested fix: one or more field changes, saved and re-validated together.
   const applyFix = useCallback(
-    (field, value) => saveCorrections({ [field]: coerceFieldValue(field, value) }),
+    (changes) =>
+      saveCorrections(
+        Object.fromEntries(Object.entries(changes).map(([field, value]) => [field, coerceFieldValue(field, value)]))
+      ),
     [saveCorrections]
   );
 
