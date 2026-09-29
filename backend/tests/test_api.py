@@ -17,6 +17,8 @@ class FakeRepository:
             "SEED-1": {"claim_data": resolve_date_tokens(seed), "seed_template": seed, "is_seed": True},
         }
         self.handoffs = []
+        self.runs = []
+        self.corrections = []
 
     def get_claim_by_number(self, number):
         row = self.rows.get(number)
@@ -38,6 +40,23 @@ class FakeRepository:
     def reset_claim(self, number):
         row = self.rows.get(number)
         return self.update_claim(number, resolve_date_tokens(row["seed_template"])) if row else None
+
+    def record_validation_run(self, number, result):
+        self.runs.append((number, result["score"], result["ruleset_version"]))
+
+    def record_corrections(self, number, before, after, source="manual"):
+        changed = [f for f in set(before) | set(after)
+                   if not f.startswith("_") and f != "id" and before.get(f) != after.get(f)]
+        self.corrections += [(number, f, before.get(f), after.get(f), source) for f in sorted(changed)]
+        return len(changed)
+
+    def history(self, number):
+        return {"validation_runs": [r for r in self.runs if r[0] == number],
+                "corrections": [c for c in self.corrections if c[0] == number]}
+
+    def ping(self):
+        if getattr(self, "down", False):
+            raise RuntimeError("unreachable")
 
     def record_handoff(self, row):
         self.handoffs.append({**row, "id": f"H-{len(self.handoffs) + 1}", "created_at": "now"})
@@ -181,3 +200,21 @@ def test_webhook_delivery(client, monkeypatch):
     assert body["delivery_status"] == "delivered"
     assert sent["url"] == "https://his.example/claims" and sent["headers"]["Authorization"] == "Bearer t0k"
     assert sent["bundle"]["resourceType"] == "Bundle"
+
+
+def test_validation_runs_and_corrections_are_recorded(client):
+    api, repo = client
+    api.post("/claims/SEED-1/validate")
+    api.post("/claims/SEED-1/correct?source=suggestion:%20WHO%20map", json={"diagnosis_code": "CA40.Z"})
+    assert [r[1] for r in repo.runs] == [80, 100]
+    assert repo.corrections == [("SEED-1", "diagnosis_code", "ZZZ999", "CA40.Z", "suggestion: WHO map")]
+    history = api.get("/claims/SEED-1/history").json()
+    assert len(history["validation_runs"]) == 2 and len(history["corrections"]) == 1
+
+
+def test_health_reports_supabase(client):
+    api, repo = client
+    assert api.get("/health").json() == {"ok": True, "checks": {"supabase": {"ok": True}}}
+    repo.down = True
+    body = api.get("/health").json()
+    assert body["ok"] is False and body["checks"]["supabase"]["error"] == "unreachable"

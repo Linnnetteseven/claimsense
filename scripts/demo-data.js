@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 
 const demoClaims = JSON.parse(
-  readFileSync(new URL("../../backend/data/demo_claims.json", import.meta.url), "utf-8"),
+  readFileSync(new URL("../backend/data/demo_claims.json", import.meta.url), "utf-8"),
 );
 
 const DATE_TOKEN = /^\{\{today([+-]\d+)d\}\}$/;

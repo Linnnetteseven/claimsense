@@ -24,8 +24,9 @@ export const api = {
   validateClaim: (id) => request(`/claims/${id}/validate`, { method: "POST" }),
   validateRaw: (claimData) =>
     request("/validate", { method: "POST", body: JSON.stringify(claimData) }),
-  correctClaim: (id, correctedData) =>
-    request(`/claims/${id}/correct`, {
+  // source: "manual" or the suggestion applied, kept in the corrections audit.
+  correctClaim: (id, correctedData, source = "manual") =>
+    request(`/claims/${id}/correct?source=${encodeURIComponent(source)}`, {
       method: "POST",
       body: JSON.stringify(correctedData),
     }),

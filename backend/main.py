@@ -12,6 +12,8 @@ Routes:
   POST /validate                   validate any arbitrary claim dict (for re-validation)
   GET  /claims/{id}/audit          hash-chain audit history for one claim
   GET  /claims/{id}/bundle         Kenya eClaims submission Bundle + structural checks
+  GET  /claims/{id}/history        validation runs and corrections for a claim
+  GET  /health                     dependency health (Supabase)
   POST /claims/{id}/reset          demo: restore one claim to its seeded state
   POST /demo/reset                 demo: restore all seeded claims, drop UI-created ones
   GET  /audit/verify               recompute and verify the audit chain
@@ -103,6 +105,14 @@ def _preview(result: dict) -> dict:
         key: result[key]
         for key in ("score", "status", "color", "error_count", "warning_count")
     }
+
+
+def _record_run(repository, claim_id: str, result: dict) -> None:
+    """Keep the validation history; never fail a request over it."""
+    try:
+        repository.record_validation_run(claim_id, result)
+    except Exception:
+        logger.exception("Unable to record validation run for %s", claim_id)
 
 
 def full_pipeline(claim: dict, lookups=None) -> dict:
@@ -244,6 +254,7 @@ async def validate_claim(claim_id: str):
     claim = get_claim_or_404(claim_id, repository)
     logger.info("Validating %s", claim_id)
     result = full_pipeline(claim, RepositoryLookups(repository))
+    _record_run(repository, claim_id, result)
     logger.info(
         "%s — score: %d, errors: %d, warnings: %d",
         claim_id,
@@ -267,7 +278,7 @@ async def validate_arbitrary(claim: dict):
 
 
 @app.post("/claims/{claim_id}/correct")
-async def correct_claim(claim_id: str, corrections: dict):
+async def correct_claim(claim_id: str, corrections: dict, source: str = "manual"):
     """
     Merge corrections into the claim, save to the session store, re-validate.
     The frontend sends the full corrected claim dict in the body.
@@ -285,7 +296,12 @@ async def correct_claim(claim_id: str, corrections: dict):
     if saved is None:
         raise HTTPException(status_code=404, detail=f"Claim '{claim_id}' not found")
 
+    try:
+        repository.record_corrections(claim_id, original, saved, source)
+    except Exception:
+        logger.exception("Unable to record corrections for %s", claim_id)
     result = full_pipeline(saved, RepositoryLookups(repository))
+    _record_run(repository, claim_id, result)
     logger.info("Claim %s corrected — new score: %d", claim_id, result["score"])
 
     return {"claim": saved, "validation": result}
@@ -299,6 +315,26 @@ def _bundle_with_checks(claim: dict) -> dict:
         "checks_passed": not issues,
         "issues": [{"check_id": i.check_id, "message": i.message, "fields": i.fields} for i in issues],
     }
+
+
+@app.get("/claims/{claim_id}/history")
+async def get_claim_history(claim_id: str):
+    """Validation runs and field corrections for a claim, newest first."""
+    repository = claims_repository()
+    get_claim_or_404(claim_id, repository)
+    return {"claim_id": claim_id, **repository.history(claim_id)}
+
+
+@app.get("/health")
+async def health():
+    """Service health; Supabase reachability. (Phase 6 adds the other dependencies.)"""
+    checks = {}
+    try:
+        claims_repository().ping()
+        checks["supabase"] = {"ok": True}
+    except Exception as exc:
+        checks["supabase"] = {"ok": False, "error": str(exc)[:200]}
+    return {"ok": all(c["ok"] for c in checks.values()), "checks": checks}
 
 
 @app.get("/claims/{claim_id}/bundle")

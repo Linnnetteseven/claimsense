@@ -260,7 +260,7 @@ export default function ErrorCard({ result, explanation, fixSteps, claim, onEdit
                     key={choice.label}
                     type="button"
                     disabled={busy}
-                    onClick={() => onApplyFix(choice.changes)}
+                    onClick={() => onApplyFix(choice.changes, `choice: ${suggestionSource || ruleId}`)}
                     className="rounded-lg border border-teal-300 dark:border-teal-800 text-teal-800 dark:text-teal-300 hover:bg-teal-50 dark:hover:bg-teal-950/30 disabled:opacity-60 text-[11px] font-semibold px-2.5 py-1.5 transition-all"
                   >
                     {choice.label}
@@ -313,7 +313,7 @@ export default function ErrorCard({ result, explanation, fixSteps, claim, onEdit
               <button
                 type="button"
                 disabled={busy}
-                onClick={() => onApplyFix(changes)}
+                onClick={() => onApplyFix(changes, `suggestion: ${suggestionSource || ruleId}`)}
                 className="shrink-0 rounded-lg bg-teal-600 hover:bg-teal-700 disabled:opacity-60 active:scale-95 text-white text-[11px] font-bold px-3 py-2 transition-all shadow-sm"
               >
                 Apply fix

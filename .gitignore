@@ -37,3 +37,6 @@ frontend/.vercel/
 *.bak
 *.backup
 *.backup-*
+
+# Root demo-script dependencies
+/node_modules/

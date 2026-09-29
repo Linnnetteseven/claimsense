@@ -67,13 +67,13 @@ export function useClaimValidation(claim, onUpdate) {
 
   // Save pending edits (plus any extra ones) and re-validate the whole claim.
   const saveCorrections = useCallback(
-    async (extra = {}) => {
+    async (extra = {}, source = "manual") => {
       const changes = { ...edits, ...extra };
       if (!claimId || Object.keys(changes).length === 0) return;
       setState("saving");
       setError(null);
       try {
-        const result = await api.correctClaim(claimId, changes);
+        const result = await api.correctClaim(claimId, changes, source);
         setCurrentClaim(result.claim);
         setValidation(result.validation);
         setEdits({});
@@ -91,9 +91,10 @@ export function useClaimValidation(claim, onUpdate) {
 
   // Apply a suggested fix: one or more field changes, saved and re-validated together.
   const applyFix = useCallback(
-    (changes) =>
+    (changes, source = "suggestion") =>
       saveCorrections(
-        Object.fromEntries(Object.entries(changes).map(([field, value]) => [field, coerceFieldValue(field, value)]))
+        Object.fromEntries(Object.entries(changes).map(([field, value]) => [field, coerceFieldValue(field, value)])),
+        source
       ),
     [saveCorrections]
   );

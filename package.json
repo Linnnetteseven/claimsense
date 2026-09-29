@@ -1,0 +1,14 @@
+{
+  "name": "hakiki-scripts",
+  "private": true,
+  "type": "module",
+  "description": "Demo data scripts. They use the Supabase service role key from backend/.env and must never be bundled into the frontend.",
+  "scripts": {
+    "demo:seed": "node --env-file=backend/.env scripts/seed-demo.js",
+    "demo:reset": "node --env-file=backend/.env scripts/reset-demo.js",
+    "demo:seed:bulk": "node --env-file=backend/.env scripts/seed-bulk-demo.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.95.3"
+  }
+}

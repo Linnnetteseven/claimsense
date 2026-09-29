@@ -24,8 +24,8 @@ module.exports = {
   },
   overrides: [
     {
-      // Node-side seed/reset scripts and build config.
-      files: ["scripts/**/*.js", "*.config.js", ".eslintrc.cjs"],
+      // Node-side build config.
+      files: ["*.config.js", ".eslintrc.cjs"],
       env: { node: true, browser: false },
     },
   ],

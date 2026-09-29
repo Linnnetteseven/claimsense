@@ -30,6 +30,9 @@ class ClaimsRepository:
         )
 
     _HANDOFFS = "claim_handoffs"
+    _RUNS = "validation_runs"
+    _CORRECTIONS = "corrections"
+    _HISTORY_TABLES = (_HANDOFFS, _RUNS, _CORRECTIONS)
 
     @staticmethod
     def _claim_from_row(row: dict[str, Any] | None) -> dict | None:
@@ -98,12 +101,14 @@ class ClaimsRepository:
         row = (response.data or [None])[0]
         if not row or not isinstance(row.get("seed_template"), dict):
             return None
-        self._client.table(self._HANDOFFS).delete().eq("claim_number", claim_number).execute()
+        for table in self._HISTORY_TABLES:
+            self._client.table(table).delete().eq("claim_number", claim_number).execute()
         return self.update_claim(claim_number, resolve_date_tokens(row["seed_template"]))
 
     def reset_demo(self) -> dict[str, int]:
         """Delete UI-created claims and restore every seeded claim from its template."""
-        self._client.table(self._HANDOFFS).delete().neq("claim_number", "").execute()
+        for table in self._HISTORY_TABLES:
+            self._client.table(table).delete().neq("claim_number", "").execute()
         removed = self._client.table(self._TABLE).delete().eq("is_seed", False).execute()
         seeded = self._client.table(self._TABLE).select(
             "claim_number, seed_template"
@@ -136,6 +141,45 @@ class ClaimsRepository:
             "claim_number", claim_number
         ).order("created_at", desc=True).limit(1).execute()
         return (response.data or [None])[0]
+
+    def record_validation_run(self, claim_number: str, result: dict) -> None:
+        self._client.table(self._RUNS).insert({
+            "claim_number": claim_number,
+            "score": result["score"],
+            "rule_version": result["ruleset_version"],
+            "error_count": result["error_count"],
+            "warning_count": result["warning_count"],
+            "ai_explanations_used": bool(result.get("ai_explanations_used")),
+            "results": [
+                {k: r.get(k) for k in ("rule_id", "passed", "severity", "rule_version", "message")}
+                for r in result["results"]
+            ],
+        }).execute()
+
+    def record_corrections(self, claim_number: str, before: dict, after: dict, source: str = "manual") -> int:
+        """One row per field whose value changed. Returns the number recorded."""
+        rows = [
+            {"claim_number": claim_number, "field": field, "old_value": before.get(field),
+             "new_value": after.get(field), "source": source[:200]}
+            for field in sorted(set(before) | set(after))
+            if not field.startswith("_") and field != "id" and before.get(field) != after.get(field)
+        ]
+        if rows:
+            self._client.table(self._CORRECTIONS).insert(rows).execute()
+        return len(rows)
+
+    def history(self, claim_number: str, limit: int = 50) -> dict:
+        runs = self._client.table(self._RUNS).select(
+            "score, rule_version, error_count, warning_count, ai_explanations_used, created_at"
+        ).eq("claim_number", claim_number).order("created_at", desc=True).limit(limit).execute()
+        corrections = self._client.table(self._CORRECTIONS).select(
+            "field, old_value, new_value, source, created_at"
+        ).eq("claim_number", claim_number).order("created_at", desc=True).limit(limit).execute()
+        return {"validation_runs": runs.data or [], "corrections": corrections.data or []}
+
+    def ping(self) -> None:
+        """Cheap query to confirm Supabase is reachable."""
+        self._client.table(self._TABLE).select("claim_number").limit(1).execute()
 
     def find_patient_ids(self, name: str, dob: str, exclude: str = "") -> list[dict]:
         """SHA numbers on other claims for the same patient name and date of birth."""
