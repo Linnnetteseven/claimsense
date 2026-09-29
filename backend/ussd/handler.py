@@ -1,43 +1,55 @@
 """
-Hakiki USSD session handler.
+Hakiki USSD session handler (Africa's Talking).
 
-Africa's Talking sends a POST with these fields on every user action:
-  sessionId    — unique per dial session
-  phoneNumber  — caller's number (e.g. +254711XXXXXX)
-  networkCode  — MNO code
-  serviceCode  — the shortcode dialled
-  text         — CUMULATIVE user inputs, separated by * (empty on first dial)
+AT posts on every key press: sessionId, phoneNumber, serviceCode and text, where
+text holds ALL inputs so far separated by '*' (empty on first dial). We answer
+"CON <screen>" to continue or "END <screen>" to close; keep screens under 160 chars.
 
-We respond with plain text:
-  CON <message>  — keep session alive, show message
-  END <message>  — close session, show message
-
-Character limit: 160 chars per screen (safe across all networks).
+Claims are read from the database through the lookup the router passes in.
+Privacy: screens and SMS carry the claim ID, facility and results, never the
+patient's name. USSD_ALLOWED_PHONES limits access to registered officers' numbers
+(set it for the pilot; empty = open, for demos).
 """
 
+import logging
+from typing import Callable, Optional
+
 from fastapi import BackgroundTasks
-from data.mock_claims import MOCK_CLAIMS
+
+from config import config
+from ussd.sms_sender import mask_phone, send_claim_report_sms
 from validation.engine import validate
-from ussd.sms_sender import send_claim_report_sms
 
-# In-memory session store — sufficient for demo (USSD sessions complete in <3 min)
-_session_store: dict[str, dict] = {}
+logger = logging.getLogger("hakiki.ussd")
 
+Lookup = Callable[[str], Optional[dict]]
 
-def _get_claim(claim_id: str) -> dict | None:
-    return next((c for c in MOCK_CLAIMS if c["id"].upper() == claim_id.upper()), None)
-
-
-def _format_status(color: str) -> str:
-    return {"green": "READY", "amber": "REVIEW", "red": "ERRORS"}.get(color, "UNKNOWN")
+MENU = "CON Welcome to Hakiki\nSHA Claims Validator\n\n1. Check claim\n0. Exit"
+_STATUS = {"green": "READY", "amber": "REVIEW", "red": "ERRORS"}
 
 
-def _normalize_phone(phone_number: str) -> str:
-    """Fix + sign lost in URL form encoding — AT sends +254... but form decode turns + to space."""
+def normalize_phone(phone_number: str) -> str:
+    """AT sends +254...; form decoding can turn the + into a space."""
     phone_number = phone_number.strip()
-    if not phone_number.startswith("+"):
-        phone_number = "+" + phone_number
-    return phone_number
+    return phone_number if phone_number.startswith("+") else "+" + phone_number
+
+
+def allowed(phone_number: str) -> bool:
+    return not config.USSD_ALLOWED_PHONES or phone_number in config.USSD_ALLOWED_PHONES
+
+
+def _summary(claim_id: str, claim: dict, result: dict) -> str:
+    facility = str(claim.get("facility_name") or claim.get("facility_code") or "")[:22]
+    lines = [
+        f"CON {claim_id}",
+        facility,
+        f"Score: {result['score']}/100 | {_STATUS.get(result['color'], 'UNKNOWN')}",
+        f"Errors: {result['error_count']} | Warns: {result['warning_count']}",
+    ]
+    if claim.get("_status") == "handed_off":
+        lines.append("Handed off to HIS")
+    lines += ["", "1. SMS report", "0. Menu"]
+    return "\n".join(line for line in lines if line is not None)
 
 
 def handle_ussd_session(
@@ -45,110 +57,39 @@ def handle_ussd_session(
     phone_number: str,
     text: str,
     background_tasks: BackgroundTasks,
+    lookup: Lookup,
 ) -> str:
-    phone_number = _normalize_phone(phone_number)
+    phone_number = normalize_phone(phone_number)
+    if not allowed(phone_number):
+        logger.warning("USSD refused for unregistered number %s", mask_phone(phone_number))
+        return "END This number is not registered for Hakiki.\nAsk your claims supervisor to add it."
 
-    # Parse cumulative input into navigation steps
     steps = [s.strip() for s in text.split("*")] if text.strip() else []
+    if not steps:
+        return MENU
+    if steps[0] == "0":
+        return f"END Thank you for using Hakiki.\nFix and hand off claims at:\n{config.FRONTEND_URL}"
+    if steps[0] != "1":
+        return "END Invalid option.\nDial again to retry."
+    if len(steps) == 1:
+        return "CON Enter Claim ID:\ne.g. SHA-CLM-2026-001"
 
-    # ── SCREEN 1: Main menu ────────────────────────────────────────────────
-    if not steps or steps == [""]:
-        _session_store.pop(session_id, None)
-        return (
-            "CON Welcome to Hakiki\n"
-            "SHA Claims Validator\n\n"
-            "1. Check claim\n"
-            "0. Exit"
-        )
+    claim_id = steps[1].upper()
+    try:
+        claim = lookup(claim_id)
+    except Exception:
+        logger.exception("USSD claim lookup failed")
+        return "END Hakiki is unavailable right now.\nPlease try again shortly."
+    if not claim:
+        return f"END Claim {claim_id[:30]} not found.\nCheck the ID and try again."
+    result = validate(claim)
 
-    level1 = steps[0]
-
-    # ── Exit ───────────────────────────────────────────────────────────────
-    if level1 == "0":
-        return (
-            "END Thank you for using Hakiki.\n"
-            "Submit ready claims at:\n"
-            "claimsense-frontend.vercel.app"
-        )
-
-    # ── Option 1: Check claim ──────────────────────────────────────────────
-    if level1 == "1":
-
-        # SCREEN 2: Ask for claim ID
-        if len(steps) == 1:
-            return (
-                "CON Enter Claim ID:\n"
-                "e.g. SHA-CLM-2026-001"
-            )
-
-        claim_id = steps[1].upper().strip()
-
-        # SCREEN 3: Show validation result
-        if len(steps) == 2:
-            claim = _get_claim(claim_id)
-
-            if not claim:
-                return (
-                    f"END Claim {claim_id} not found.\n"
-                    "Check the ID and try again.\n"
-                    "claimsense-frontend.vercel.app"
-                )
-
-            result = validate(claim)
-            score = result["score"]
-            status = _format_status(result["color"])
-            errors = result["error_count"]
-            warnings = result["warning_count"]
-
-            name = claim.get("patient_name", "Unknown")
-            if len(name) > 14:
-                name = name[:13] + "."
-
-            _session_store[session_id] = {"claim_id": claim_id}
-
-            return (
-                f"CON {claim_id} | {name}\n"
-                f"Score: {score}/100 | {status}\n"
-                f"Errors: {errors} | Warns: {warnings}\n\n"
-                "1. Send SMS report\n"
-                "0. Back to menu"
-            )
-
-        # SCREEN 4: Act on choice after seeing result
-        if len(steps) == 3:
-            level3 = steps[2]
-
-            if level3 == "0":
-                _session_store.pop(session_id, None)
-                return (
-                    "CON Welcome to Hakiki\n"
-                    "SHA Claims Validator\n\n"
-                    "1. Check claim\n"
-                    "0. Exit"
-                )
-
-            if level3 == "1":
-                claim = _get_claim(claim_id)
-                if not claim:
-                    return "END Error retrieving claim.\nTry again later."
-
-                result = validate(claim)
-
-                # Send SMS in background so USSD response stays under 10s
-                background_tasks.add_task(
-                    send_claim_report_sms,
-                    phone_number=phone_number,
-                    claim=claim,
-                    result=result,
-                )
-
-                _session_store.pop(session_id, None)
-                return (
-                    f"END Report sent to\n"
-                    f"{phone_number}\n\n"
-                    "Check your messages.\n"
-                    "- Hakiki"
-                )
-
-    # ── Fallback ───────────────────────────────────────────────────────────
+    if len(steps) == 2:
+        return _summary(claim_id, claim, result)
+    if len(steps) == 3 and steps[2] == "0":
+        return MENU
+    if len(steps) == 3 and steps[2] == "1":
+        # In the background so the USSD reply stays inside AT's time limit.
+        background_tasks.add_task(send_claim_report_sms, phone_number=phone_number, claim=claim, result=result)
+        return f"END Report for {claim_id} sent by SMS.\n- Hakiki"
     return "END Invalid option.\nDial again to retry."

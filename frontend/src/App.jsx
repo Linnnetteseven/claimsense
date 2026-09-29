@@ -4,15 +4,18 @@ import ValidationPanel from "./components/ValidationPanel.jsx";
 import LandingPage from "./components/LandingPage.jsx";
 import AddClaimModal from "./components/AddClaimModal.jsx";
 import { useClaims } from "./hooks/useClaims.js";
+import { stageOf } from "./constants/stages.js";
 
 export default function App() {
-  const [selectedClaim, setSelectedClaim] = useState(null);
-  const [counts, setCounts] = useState({ total: 0, ready: 0, review: 0, errors: 0 });
-
-  const { claims, loading, error, reload, patchPreview, addClaim } = useClaims();
+  const { claims, loading, error, reload, patchClaim, addClaim, resetDemo } = useClaims();
   const [view, setView] = useState("landing");
   const [selectedId, setSelectedId] = useState(null);
+  const selectedClaim = claims.find((c) => c.id === selectedId) ?? null;
   const [addModalOpen, setAddModalOpen] = useState(false);
+  // "idle" | "confirm" | "running"; bumping resetCount remounts the workspace.
+  const [resetState, setResetState] = useState("idle");
+  const [resetCount, setResetCount] = useState(0);
+  const [resetMessage, setResetMessage] = useState(null);
 
   const [darkMode, setDarkMode] = useState(() => {
     if (typeof window !== "undefined") {
@@ -22,6 +25,22 @@ export default function App() {
     }
     return false;
   });
+
+  // "/" jumps to the claim search, unless the officer is already typing somewhere.
+  useEffect(() => {
+    const onKey = (e) => {
+      const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName);
+      if (e.key === "/" && !typing && !e.ctrlKey && !e.metaKey) {
+        const search = document.getElementById("claim-search");
+        if (search) {
+          e.preventDefault();
+          search.focus();
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   useEffect(() => {
     if (darkMode) {
@@ -33,11 +52,30 @@ export default function App() {
     }
   }, [darkMode]);
 
-  if (!selectedId && claims.length > 0) {
+  // Select the first claim on load, or when the selected one disappears (e.g. after a demo reset).
+  if (claims.length > 0 && !claims.some((c) => c.id === selectedId)) {
     setSelectedId(claims[0].id);
   }
 
-  const readyCount = claims.filter((c) => c._preview?.color === "green").length;
+  async function handleResetDemo() {
+    if (resetState === "idle") {
+      setResetState("confirm");
+      return;
+    }
+    setResetState("running");
+    setResetMessage(null);
+    try {
+      const { restored, removed } = await resetDemo();
+      setResetCount((n) => n + 1);
+      setResetMessage(`Demo reset: ${restored} claims restored, ${removed} added claims removed.`);
+    } catch (err) {
+      setResetMessage(`Demo reset failed: ${err.message}`);
+    } finally {
+      setResetState("idle");
+    }
+  }
+
+  const readyCount = claims.filter((c) => (c._stage ?? stageOf(c)) === "ready").length;
 
   async function handleAddClaim(claimData) {
     const created = await addClaim(claimData);
@@ -99,7 +137,7 @@ export default function App() {
             <button
               type="button"
               onClick={() => setAddModalOpen(true)}
-              className="text-xs bg-[#00897B] hover:bg-teal-700 active:scale-95 transition-all text-white font-semibold rounded-lg px-2.5 py-2 shadow-sm whitespace-nowrap"
+              className="text-xs bg-[#00796B] hover:bg-teal-800 active:scale-95 transition-all text-white font-semibold rounded-lg px-2.5 py-2 shadow-sm whitespace-nowrap"
             >
               + Add
             </button>
@@ -109,23 +147,45 @@ export default function App() {
         {/* Search & Stats Header */}
         <div className="px-5 py-3 bg-slate-50/50 dark:bg-slate-900/50 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
           <div>
-            <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+            <p className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
               Claims Queue
             </p>
             {!loading && (
               <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-                {counts.total || claims.length} total • {counts.ready || readyCount} ready
+                {claims.length} total • {readyCount} ready
               </p>
             )}
           </div>
-          <button
-            type="button"
-            onClick={reload}
-            className="text-xs text-slate-500 dark:text-slate-400 hover:text-teal-600 dark:hover:text-teal-400 font-medium transition-colors"
-          >
-            Refresh
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={reload}
+              className="text-xs text-slate-500 dark:text-slate-400 hover:text-teal-600 dark:hover:text-teal-400 font-medium transition-colors"
+            >
+              Refresh
+            </button>
+            <button
+              type="button"
+              onClick={handleResetDemo}
+              onBlur={() => resetState === "confirm" && setResetState("idle")}
+              disabled={resetState === "running"}
+              title="Restore every seeded claim and remove claims added in this demo"
+              className={`text-xs font-medium transition-colors disabled:opacity-60 ${
+                resetState === "confirm"
+                  ? "text-red-600 dark:text-red-400 font-bold"
+                  : "text-slate-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400"
+              }`}
+            >
+              {resetState === "confirm" ? "Confirm reset?" : resetState === "running" ? "Resetting..." : "Reset demo"}
+            </button>
+          </div>
         </div>
+
+        {resetMessage && (
+          <p role="status" className="mx-4 mt-2 text-[11px] text-slate-500 dark:text-slate-400">
+            {resetMessage}
+          </p>
+        )}
 
         {error && (
           <div role="alert" className="mx-4 my-2 text-xs text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-950/20 border border-red-100 dark:border-red-900/40 rounded-lg p-3">
@@ -136,18 +196,16 @@ export default function App() {
         {/* Scrollable list of claims */}
         <div className="flex-1 overflow-y-auto">
           <ClaimList
+            claims={claims}
+            loading={loading}
             selectedId={selectedId}
-            onSelect={(id, claim) => {
-              setSelectedId(id);
-              setSelectedClaim(claim);
-            }}
-            onCountsChange={setCounts}
+            onSelect={setSelectedId}
           />
         </div>
 
         {/* Footer info */}
         <div className="px-5 py-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50/30 dark:bg-slate-900/30">
-          <p className="text-[10px] text-slate-400 dark:text-slate-500 font-medium">
+          <p className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">
             Hakiki Claims Portal
           </p>
         </div>
@@ -155,9 +213,10 @@ export default function App() {
 
       {/* Right workspace: Dynamic Workspace */}
       <main className="flex-1 flex flex-col overflow-hidden bg-slate-100/60 dark:bg-slate-900/40">
-        <ValidationPanel 
-          claim={selectedClaim} 
-          onValidationComplete={patchPreview} 
+        <ValidationPanel
+          key={resetCount}
+          claim={selectedClaim}
+          onValidationComplete={patchClaim}
         />
       </main>
 

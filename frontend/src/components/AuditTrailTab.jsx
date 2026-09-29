@@ -11,7 +11,7 @@ export default function AuditTrailTab({ claimId }) {
 
   if (state === "idle" || state === "loading") {
     return (
-      <div className="bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-850 rounded-2xl p-8 text-center shadow-sm">
+      <div className="bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-8 text-center shadow-sm">
         <p className="text-sm text-slate-500 dark:text-slate-400">Loading audit history…</p>
       </div>
     );
@@ -19,7 +19,7 @@ export default function AuditTrailTab({ claimId }) {
 
   if (state === "error") {
     return (
-      <div className="bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-850 rounded-2xl p-6 shadow-sm">
+      <div className="bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-6 shadow-sm">
         <p className="text-sm text-red-600 dark:text-red-400">
           Couldn&apos;t load audit history: {error}
         </p>
@@ -29,7 +29,7 @@ export default function AuditTrailTab({ claimId }) {
 
   if (history.length === 0) {
     return (
-      <div className="bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-850 rounded-2xl p-8 text-center shadow-sm">
+      <div className="bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-8 text-center shadow-sm">
         <p className="text-sm text-slate-500 dark:text-slate-400">
           No validation runs recorded yet for this claim.
         </p>
@@ -53,18 +53,18 @@ export default function AuditTrailTab({ claimId }) {
         </div>
       </div>
 
-      <div className="bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-850 rounded-2xl p-5 shadow-sm">
-        <h3 className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-4">
+      <div className="bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-5 shadow-sm">
+        <h3 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-4">
           Validation history
         </h3>
         <div className="space-y-3">
           {history.map((block, i) => (
             <div
               key={block.hash}
-              className="border border-slate-100 dark:border-slate-850 rounded-xl p-4 bg-slate-50/50 dark:bg-slate-900/40"
+              className="border border-slate-100 dark:border-slate-800 rounded-xl p-4 bg-slate-50/50 dark:bg-slate-900/40"
             >
               <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-                <span className="text-xs font-mono text-slate-400 dark:text-slate-500">
+                <span className="text-xs font-mono text-slate-500 dark:text-slate-400">
                   Run #{i + 1}
                 </span>
                 <span className="text-sm font-bold text-slate-800 dark:text-slate-200">
@@ -73,15 +73,15 @@ export default function AuditTrailTab({ claimId }) {
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs font-mono text-slate-500 dark:text-slate-400">
                 <div>
-                  <span className="block text-slate-400 dark:text-slate-500">Prev hash</span>
+                  <span className="block text-slate-500 dark:text-slate-400">Prev hash</span>
                   {block.prev_hash}
                 </div>
                 <div>
-                  <span className="block text-slate-400 dark:text-slate-500">This hash</span>
+                  <span className="block text-slate-500 dark:text-slate-400">This hash</span>
                   {block.hash}
                 </div>
               </div>
-              <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-2">
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-2">
                 {block.timestamp}
               </p>
             </div>

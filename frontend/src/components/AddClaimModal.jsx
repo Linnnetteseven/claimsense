@@ -1,5 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import PropTypes from "prop-types";
+import { api } from "../api/client.js";
+import CodeSearchInput from "./CodeSearchInput.jsx";
 
 const EMPTY_ITEM = { service_code: "", description: "", quantity: 1, unit_price: 0 };
 
@@ -11,19 +13,24 @@ function emptyForm() {
     gender: "F",
     facility_name: "",
     facility_code: "",
+    facility_level: "",
     visit_date: new Date().toISOString().slice(0, 10),
+    discharge_date: "",
+    practitioner_name: "",
+    practitioner_id: "",
     diagnosis_code: "",
     diagnosis_description: "",
     coverage_start_date: "",
     coverage_end_date: "",
     scheme_code: "SHA-2025",
+    fund: "SHIF",
     items: [{ ...EMPTY_ITEM }],
   };
 }
 
 /**
  * Modal form for adding a new claim to the queue. Deliberately mirrors the
- * exact fields the 7 validation rules check, so an officer filling this in
+ * fields the validation rules check, so an officer filling this in
  * already understands what "complete" looks like before they even hit
  * Validate — the form itself teaches the rules.
  */
@@ -43,6 +50,13 @@ export default function AddClaimModal({ onClose, onSubmit }) {
   );
 
   const claimedAmount = amountOverride !== "" ? Number(amountOverride) : itemsTotal;
+
+  // Esc closes the form.
+  useEffect(() => {
+    const onKey = (e) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
 
   function updateField(field, value) {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -70,7 +84,15 @@ export default function AddClaimModal({ onClose, onSubmit }) {
     try {
       await onSubmit({
         ...form,
-        items: form.items.filter((item) => item.service_code || item.description),
+        // Number items and default each service period to the visit date; editable after saving.
+        items: form.items
+          .filter((item) => item.service_code || item.description)
+          .map((item, i) => ({
+            ...item,
+            sequence: i + 1,
+            service_start: item.service_start || form.visit_date,
+            service_end: item.service_end || form.discharge_date || form.visit_date,
+          })),
         claimed_amount: claimedAmount,
       });
     } catch (err) {
@@ -88,7 +110,7 @@ export default function AddClaimModal({ onClose, onSubmit }) {
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
       <div className="bg-white dark:bg-slate-950 border dark:border-slate-800 rounded-2xl w-full max-w-2xl max-h-full overflow-y-auto shadow-xl animate-fade-in text-slate-800 dark:text-slate-100">
-        <div className="sticky top-0 bg-white dark:bg-slate-950 border-b border-slate-200 dark:border-slate-850 px-6 py-4 flex items-center justify-between z-10">
+        <div className="sticky top-0 bg-white dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 px-6 py-4 flex items-center justify-between z-10">
           <h2 id="add-claim-title" className="text-lg font-semibold text-slate-900 dark:text-slate-100">
             Add a new claim
           </h2>
@@ -96,7 +118,7 @@ export default function AddClaimModal({ onClose, onSubmit }) {
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-350 text-xl leading-none px-2"
+            className="text-slate-500 hover:text-slate-600 dark:text-slate-400 dark:hover:text-slate-300 text-xl leading-none px-2"
           >
             ×
           </button>
@@ -114,7 +136,7 @@ export default function AddClaimModal({ onClose, onSubmit }) {
 
           {/* Patient */}
           <fieldset className="space-y-3">
-            <legend className="text-xs font-semibold text-slate-500 dark:text-slate-450 uppercase tracking-widest mb-1">
+            <legend className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-1">
               Patient
             </legend>
             <div className="grid grid-cols-2 gap-3">
@@ -127,7 +149,7 @@ export default function AddClaimModal({ onClose, onSubmit }) {
                   placeholder="Grace Wanjiru Njoroge"
                 />
               </Field>
-              <Field label="Insuree / Patient ID" required>
+              <Field label="SHA number (patient)" required>
                 <input
                   required
                   value={form.patient_id}
@@ -159,7 +181,7 @@ export default function AddClaimModal({ onClose, onSubmit }) {
 
           {/* Visit */}
           <fieldset className="space-y-3">
-            <legend className="text-xs font-semibold text-slate-500 dark:text-slate-450 uppercase tracking-widest mb-1">
+            <legend className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-1">
               Visit
             </legend>
             <div className="grid grid-cols-2 gap-3">
@@ -190,13 +212,54 @@ export default function AddClaimModal({ onClose, onSubmit }) {
                   className="input"
                 />
               </Field>
-              <Field label="Diagnosis (ICD-10)" required>
+              <Field label="Facility level" required>
+                <select
+                  required
+                  value={form.facility_level}
+                  onChange={(e) => updateField("facility_level", e.target.value)}
+                  className="input"
+                >
+                  <option value="">Select...</option>
+                  {["2", "3", "4", "5", "6"].map((l) => (
+                    <option key={l} value={l}>Level {l}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Discharge date (inpatient only)">
+                <input
+                  type="date"
+                  value={form.discharge_date}
+                  onChange={(e) => updateField("discharge_date", e.target.value)}
+                  className="input"
+                />
+              </Field>
+              <Field label="Treating practitioner" required>
                 <input
                   required
-                  value={form.diagnosis_code}
-                  onChange={(e) => updateField("diagnosis_code", e.target.value.toUpperCase())}
+                  value={form.practitioner_name}
+                  onChange={(e) => updateField("practitioner_name", e.target.value)}
+                  className="input"
+                  placeholder="Dr. Wairimu Kinyua"
+                />
+              </Field>
+              <Field label="Practitioner registry number (PUID)" required>
+                <input
+                  required
+                  value={form.practitioner_id}
+                  onChange={(e) => updateField("practitioner_id", e.target.value)}
                   className="input font-mono"
-                  placeholder="J18.9"
+                  placeholder="PUID-0034512-1"
+                />
+              </Field>
+              <Field label="Diagnosis (ICD-11)" required>
+                <CodeSearchInput
+                  value={form.diagnosis_code}
+                  onChange={(text) => updateField("diagnosis_code", text.toUpperCase())}
+                  onPick={(o) => setForm((prev) => ({ ...prev, diagnosis_code: o.code, diagnosis_description: o.title }))}
+                  search={api.searchIcd11}
+                  ariaLabel="Diagnosis (ICD-11)"
+                  className="input font-mono"
+                  placeholder="Code or words, e.g. pneumonia"
                 />
               </Field>
               <Field label="Diagnosis description" className="col-span-2">
@@ -212,7 +275,7 @@ export default function AddClaimModal({ onClose, onSubmit }) {
 
           {/* Coverage */}
           <fieldset className="space-y-3">
-            <legend className="text-xs font-semibold text-slate-500 dark:text-slate-450 uppercase tracking-widest mb-1">
+            <legend className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-1">
               Coverage
             </legend>
             <div className="grid grid-cols-2 gap-3">
@@ -232,7 +295,14 @@ export default function AddClaimModal({ onClose, onSubmit }) {
                   className="input"
                 />
               </Field>
-              <Field label="Scheme code" className="col-span-2">
+              <Field label="Fund">
+                <select value={form.fund} onChange={(e) => updateField("fund", e.target.value)} className="input">
+                  <option value="SHIF">SHIF</option>
+                  <option value="PHC">PHC (capitated primary care)</option>
+                  <option value="ECCIF">ECCIF</option>
+                </select>
+              </Field>
+              <Field label="Scheme code">
                 <input
                   value={form.scheme_code}
                   onChange={(e) => updateField("scheme_code", e.target.value)}
@@ -245,31 +315,44 @@ export default function AddClaimModal({ onClose, onSubmit }) {
           {/* Items */}
           <fieldset className="space-y-3">
             <div className="flex items-center justify-between">
-              <legend className="text-xs font-semibold text-slate-500 dark:text-slate-450 uppercase tracking-widest">
+              <legend className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-widest">
                 Service items
               </legend>
               <button
                 type="button"
                 onClick={addItemRow}
-                className="text-xs text-teal-600 hover:text-teal-800 font-medium"
+                className="text-xs text-teal-700 hover:text-teal-800 font-medium"
               >
                 + Add item
               </button>
             </div>
             <div className="space-y-2">
               {form.items.map((item, index) => (
-                // eslint-disable-next-line react/no-array-index-key -- rows have no stable id until saved
+                // Index key: rows have no stable id until saved.
                 <div key={index} className="grid grid-cols-12 gap-2 items-center">
-                  <input
-                    value={item.service_code}
-                    onChange={(e) => updateItem(index, "service_code", e.target.value)}
-                    placeholder="SHA-CONS-001"
-                    className="input col-span-3 font-mono text-xs"
-                  />
+                  <div className="col-span-3">
+                    <CodeSearchInput
+                      value={item.service_code}
+                      onChange={(text) => updateItem(index, "service_code", text.toUpperCase())}
+                      onPick={(o) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          items: prev.items.map((it, i) => (i === index
+                            ? { ...it, service_code: o.code, description: it.description || o.title }
+                            : it)),
+                        }))
+                      }
+                      search={(q) => api.searchInterventions(q, form.facility_level)}
+                      ariaLabel={`Item ${index + 1} intervention code`}
+                      className="input font-mono text-xs"
+                      placeholder="Code or words"
+                    />
+                  </div>
                   <input
                     value={item.description}
                     onChange={(e) => updateItem(index, "description", e.target.value)}
                     placeholder="Description"
+                    aria-label={`Item ${index + 1} description`}
                     className="input col-span-4"
                   />
                   <input
@@ -292,7 +375,7 @@ export default function AddClaimModal({ onClose, onSubmit }) {
                     type="button"
                     onClick={() => removeItemRow(index)}
                     aria-label="Remove item"
-                    className="col-span-1 text-slate-400 hover:text-red-500 text-lg leading-none"
+                    className="col-span-1 text-slate-500 hover:text-red-500 text-lg leading-none"
                   >
                     ×
                   </button>
@@ -323,7 +406,7 @@ export default function AddClaimModal({ onClose, onSubmit }) {
             <button
               type="submit"
               disabled={submitting}
-              className="flex-1 bg-teal-600 text-white py-2.5 rounded-lg text-sm font-medium hover:bg-teal-700 disabled:opacity-60 active:scale-95 transition-all"
+              className="flex-1 bg-teal-700 text-white py-2.5 rounded-lg text-sm font-medium hover:bg-teal-800 disabled:opacity-60 active:scale-95 transition-all"
             >
               {submitting ? "Adding…" : "Add claim to queue"}
             </button>
@@ -346,7 +429,7 @@ function Field({ label, required, className = "", children }) {
     <label className={`block ${className}`}>
       <span className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
         {label}
-        {required && <span className="text-red-500"> *</span>}
+        {required && <span className="text-red-600"> *</span>}
       </span>
       {children}
     </label>

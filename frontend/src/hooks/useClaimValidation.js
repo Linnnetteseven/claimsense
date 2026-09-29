@@ -1,90 +1,38 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api } from "../api/client.js";
-
-// Client-side rule evaluator for testing the user flow when backend is offline
-function simulateValidation(claim, edits = {}) {
-  const mergedClaim = { ...claim, ...edits };
-  const diagnosisCode = mergedClaim.diagnosis_code || "";
-  const claimedAmount = Number(mergedClaim.claimed_amount || 0);
-
-  // Checks
-  const codePassed = diagnosisCode === "A09" || diagnosisCode === "A09.9";
-  const amountPassed = claimedAmount <= 10000;
-
-  const results = [
-    {
-      rule_id: "SHA-R1",
-      passed: codePassed,
-      severity: "error",
-      field: "diagnosis_code",
-      message: codePassed
-        ? "Diagnosis code matches the active ICD-10 registry"
-        : `Invalid ICD-10 Diagnosis code "${diagnosisCode}"`,
-    },
-    {
-      rule_id: "SHA-R2",
-      passed: amountPassed,
-      severity: "error",
-      field: "claimed_amount",
-      message: amountPassed
-        ? `Claimed amount KES ${claimedAmount.toLocaleString()} is within reimbursement limits`
-        : `Claimed amount KES ${claimedAmount.toLocaleString()} exceeds KES 10,000 limit`,
-    },
-    {
-      rule_id: "SHA-R3",
-      passed: true,
-      severity: "warning",
-      field: "visit_date",
-      message: "Visit date is within active policy window",
-    }
-  ];
-
-  const failedCount = results.filter((r) => !r.passed).length;
-  const score = failedCount === 0 ? 100 : failedCount === 1 ? 75 : 45;
-  
-  let color = "red";
-  let status = "High Risk";
-  if (score >= 85) {
-    color = "green";
-    status = "Ready for Submission";
-  } else if (score >= 60) {
-    color = "amber";
-    status = "Needs Review";
-  }
-
-  return {
-    score,
-    status,
-    color,
-    error_count: failedCount,
-    warning_count: 0,
-    results,
-    explanations: {
-      "SHA-R1": "The diagnosis code provided does not match active ICD-10 codes in our database. Update this field to a valid clinical code like A09.",
-      "SHA-R2": `The requested KES ${claimedAmount.toLocaleString()} exceeds the standard pre-authorized limit of KES 10,000. Please revise service items or select a pre-authorized diagnosis code.`,
-    },
-    fhir_claim_response: {
-      resourceType: "ClaimResponse",
-      id: `fhir-${mergedClaim.id}`,
-      status: "active",
-      outcome: failedCount === 0 ? "complete" : "error",
-      disposition: failedCount === 0 ? "Claim accepted by openIMIS core system" : "Fails SHA validator rules",
-      patient: { reference: `Patient/${mergedClaim.patient_id || "PT-UNKNOWN"}` },
-      created: new Date().toISOString().split("T")[0],
-    },
-  };
-}
+import { coerceFieldValue } from "../constants/status.js";
 
 /**
- * Encapsulates the full validate → correct → submit workflow for one claim.
- * Fallbacks to simulated state if the API fails, ensuring offline testing works.
+ * Validation workflow for one claim.
+ *
+ * state: "idle" | "loading" | "results" | "saving" | "submitting" | "submitted"
+ * ("submitted" means handed off to the hospital HIS, which submits to SHA.)
+ *
+ * Corrections are saved to the backend (and so to Supabase) and re-validated
+ * in one call; the backend re-runs every rule, so fixing one field can clear
+ * or surface other errors. onUpdate(claimId, { claim, validation }) keeps the
+ * queue in sync.
  */
-export function useClaimValidation(claim, onValidationComplete) {
+export function useClaimValidation(claim, onUpdate) {
   const [state, setState] = useState("idle");
   const [validation, setValidation] = useState(null);
   const [edits, setEdits] = useState({});
+  const [currentClaim, setCurrentClaim] = useState(claim);
   const [error, setError] = useState(null);
   const [submitResult, setSubmitResult] = useState(null);
+
+  useEffect(() => {
+    setCurrentClaim(claim);
+    setState("idle");
+    setValidation(null);
+    setEdits({});
+    setError(null);
+    setSubmitResult(null);
+    // Reset only when a different claim is selected, not on every refetch of the same one.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [claim?.id]);
+
+  const claimId = claim?.id;
 
   const reset = useCallback(() => {
     setState("idle");
@@ -95,73 +43,103 @@ export function useClaimValidation(claim, onValidationComplete) {
   }, []);
 
   const validate = useCallback(async () => {
+    if (!claimId) return;
     setState("loading");
     setError(null);
     setEdits({});
-    setValidation(null);
+    setSubmitResult(null);
     try {
-      const result = await api.validateClaim(claim.id);
+      const result = await api.validateClaim(claimId);
       setValidation(result);
       setState("results");
-      onValidationComplete?.(claim.id, result);
-    } catch {
-      // Backend offline simulation fallback
-      setTimeout(() => {
-        const result = simulateValidation(claim);
-        setValidation(result);
-        setState("results");
-        onValidationComplete?.(claim.id, result);
-      }, 500);
+      onUpdate?.(claimId, { validation: result });
+    } catch (err) {
+      setError(`Validation failed: ${err.message}`);
+      setState(validation ? "results" : "idle");
     }
-  }, [claim, onValidationComplete]);
+  }, [claimId, onUpdate, validation]);
 
   const editField = useCallback((field, value) => {
-    setEdits((prev) => ({ ...prev, [field]: value }));
+    setEdits((prev) => ({ ...prev, [field]: coerceFieldValue(field, value) }));
   }, []);
 
-  const revalidateWithEdits = useCallback(async () => {
-    if (!validation) return;
-    const corrected = { ...claim, ...edits };
-    setState("loading");
-    setError(null);
-    try {
-	const result = await api.validateRaw(corrected);
-	setValidation(result);
-	setEdits({});
-	setState("results");
-	onValidationComplete?.(claim.id, result);
-    } catch {
-      // Backend offline simulation fallback
-      setTimeout(() => {
-        const result = simulateValidation(claim, edits);
-        setValidation(result);
+  const discardEdits = useCallback(() => setEdits({}), []);
+
+  // Save pending edits (plus any extra ones) and re-validate the whole claim.
+  const saveCorrections = useCallback(
+    async (extra = {}, source = "manual") => {
+      const changes = { ...edits, ...extra };
+      if (!claimId || Object.keys(changes).length === 0) return;
+      setState("saving");
+      setError(null);
+      try {
+        const result = await api.correctClaim(claimId, changes, source);
+        setCurrentClaim(result.claim);
+        setValidation(result.validation);
         setEdits({});
         setState("results");
-        onValidationComplete?.(claim.id, result);
-      }, 500);
-    }
-  }, [claim, edits, validation, onValidationComplete]);
+        onUpdate?.(claimId, { claim: result.claim, validation: result.validation });
+      } catch (err) {
+        // Keep the officer's edits so nothing typed is lost.
+        setEdits(changes);
+        setError(`Could not save corrections: ${err.message}`);
+        setState("results");
+      }
+    },
+    [claimId, edits, onUpdate]
+  );
 
-  const submit = useCallback(async () => {
-    setState("submitting");
+  // Apply a suggested fix: one or more field changes, saved and re-validated together.
+  const applyFix = useCallback(
+    (changes, source = "suggestion") =>
+      saveCorrections(
+        Object.fromEntries(Object.entries(changes).map(([field, value]) => [field, coerceFieldValue(field, value)])),
+        source
+      ),
+    [saveCorrections]
+  );
+
+  // Demo: put the claim back to its seeded state and validate it again.
+  const restoreOriginal = useCallback(async () => {
+    if (!claimId) return;
+    setState("loading");
     setError(null);
+    setEdits({});
+    setSubmitResult(null);
     try {
-      const result = await api.submitClaim(claim.id);
-      setSubmitResult(result);
-      setState("submitted");
-    } catch {
-      // Backend offline simulation fallback
-      setTimeout(() => {
-        const result = {
-          mode: "mock-ledger",
-          score: validation?.score ?? 100,
-          fhir_claim_response: validation?.fhir_claim_response,
-        };
+      const restored = await api.resetClaim(claimId);
+      const result = await api.validateClaim(claimId);
+      setCurrentClaim(restored.claim);
+      setValidation(result);
+      setState("results");
+      onUpdate?.(claimId, { claim: restored.claim, validation: result });
+    } catch (err) {
+      setError(`Could not restore the original claim: ${err.message}`);
+      setState(validation ? "results" : "idle");
+    }
+  }, [claimId, onUpdate, validation]);
+
+  const submit = useCallback(
+    async (acknowledgeWarnings = false) => {
+      if (!claimId || !validation || validation.error_count > 0 || Object.keys(edits).length > 0) {
+        return;
+      }
+      setState("submitting");
+      setError(null);
+      try {
+        const result = await api.handoffClaim(claimId, acknowledgeWarnings);
         setSubmitResult(result);
         setState("submitted");
-      }, 500);
-    }
-  }, [claim, validation]);
+        onUpdate?.(claimId, { claim: { _status: "handed_off" } });
+      } catch (err) {
+        setError(`Hand-off failed: ${err.message}`);
+        setState("results");
+      }
+    },
+    [claimId, validation, edits, onUpdate]
+  );
+
+  const hasEdits = Object.keys(edits).length > 0;
 
   return {
     state,
@@ -169,13 +147,16 @@ export function useClaimValidation(claim, onValidationComplete) {
     edits,
     error,
     submitResult,
-    hasEdits: Object.keys(edits).length > 0,
-    canSubmit: (validation?.error_count ?? 1) === 0,
+    currentClaim,
+    hasEdits,
+    canSubmit: Boolean(validation) && validation.error_count === 0 && !hasEdits,
     validate,
     editField,
-    revalidateWithEdits,
+    discardEdits,
+    saveCorrections,
+    applyFix,
+    restoreOriginal,
     submit,
     reset,
   };
 }
-

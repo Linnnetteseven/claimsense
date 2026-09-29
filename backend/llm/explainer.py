@@ -1,114 +1,168 @@
 """
-Generates plain-English error explanations using Google Gemini 2.0 Flash.
+Plain-language explanations of failed rules, from Gemini.
 
-Falls back to built-in rule suggestion text if:
-  - GEMINI_API_KEY is not set in .env
-  - The API call fails for any reason
-  - The response cannot be parsed as JSON
+Gemini only explains; the score comes from the deterministic rules and never changes here.
+
+- Model: GEMINI_MODEL, with one retry on GEMINI_FALLBACK_MODEL; GEMINI_TIMEOUT_SECONDS per call (API minimum 10 s).
+- Structured output: a Pydantic schema passed as response_schema; read response.parsed.
+- Privacy: the prompt carries rule results and non-identifying clinical context only. No
+  patient name, patient or practitioner IDs, dates of birth or claim IDs (Kenya Data
+  Protection Act 2019, Digital Health Act 2023).
+- Cache: explanations are cached by (rule_id, message), see llm/cache.py.
+- Fallback: on any failure the rule's own advice text is returned with ai_used False.
 """
 
-import json
 import logging
+from typing import Optional
+
 from google import genai
+from google.genai import types
+from pydantic import BaseModel
+
 from config import config
+from llm import cache
 from llm.sops import get_department_context
 
 logger = logging.getLogger(__name__)
 
-# Lazy init — not at import time, avoids cold-start env var timing issues
 _client = None
 
 
+class Explanation(BaseModel):
+    rule_id: str
+    plain_explanation: str
+    fix_steps: list[str]
+    # Only for rules offered a list of choices: one code copied from that list, or empty.
+    pick_code: Optional[str] = None
+    pick_reason: Optional[str] = None
+
+
 def _get_client():
-    """Initialize Gemini client on first call, not at module import."""
+    """Initialise the Gemini client on first use, not at import (serverless cold starts)."""
     global _client
     if _client is None:
         if not config.GEMINI_API_KEY:
-            logger.warning("GEMINI_API_KEY not set — Gemini disabled, using fallback")
+            logger.warning("GEMINI_API_KEY not set; using rule advice text")
             return None
         try:
-            _client = genai.Client(api_key=config.GEMINI_API_KEY)
-            logger.info("Gemini client initialized OK")
+            _client = genai.Client(
+                api_key=config.GEMINI_API_KEY,
+                http_options=types.HttpOptions(timeout=int(config.GEMINI_TIMEOUT_SECONDS * 1000)),
+            )
         except Exception as exc:
-            logger.error("Failed to initialize Gemini client: %s", exc)
+            logger.error("Failed to initialise Gemini client: %s", exc)
             return None
     return _client
 
 
-def explain_errors(errors: list[dict], claim: dict) -> tuple[dict[str, str], bool]:
-    """
-    Returns (explanations_dict, ai_was_used).
-    explanations_dict maps rule_id -> plain-English explanation.
-    ai_was_used = True if Gemini responded, False if using fallback.
-    """
-    if not errors:
-        return {}, False
+def claim_context(claim: dict) -> str:
+    """Non-identifying context for the prompt. Never add names, IDs or dates of birth here."""
+    items = ", ".join(
+        f"{i.get('service_code') or 'no code'} ({i.get('description') or 'no description'})"
+        for i in claim.get("items") or []
+    )
+    lines = [
+        f"Diagnosis: {claim.get('diagnosis_code', '')} {claim.get('diagnosis_description', '')}".strip(),
+        f"Department: {claim.get('department') or 'unknown'}",
+        f"Fund: {claim.get('fund') or 'unknown'}; facility level: {claim.get('facility_level') or 'unknown'}",
+        f"Items: {items or 'none'}",
+        get_department_context(claim.get("department")),
+    ]
+    return "\n".join(line for line in lines if line)
 
-    client = _get_client()
 
-    if not client:
-        return {e["rule_id"]: e["suggestion"] for e in errors}, False
+def build_prompt(errors: list[dict], claim: dict, targets: Optional[dict] = None) -> str:
+    from suggest.enrich import candidate_block
 
-    error_lines = "\n".join(
-        f'rule_id="{e["rule_id"]}" | issue="{e["message"]}" | hint="{e["suggestion"]}"'
+    choices = candidate_block(targets or {})
+    failures = "\n".join(
+        f'- rule_id="{e["rule_id"]}" | problem="{e["message"]}" | rule advice="{e["suggestion"]}"'
         for e in errors
     )
+    return f"""You help hospital claims officers in Kenya fix claims before they go to the Social Health Authority (SHA).
 
-    dept_context = get_department_context(claim.get("department"))
+For each failed check below, explain in plain language a non-technical clerk can act on:
+- plain_explanation: 1-2 sentences on what is wrong and why SHA cares.
+- fix_steps: 1-3 short steps that say exactly what to type or select and in which box
+  (for example: "In item 1, type SHA-12-001 in the intervention code box").
+- pick_code / pick_reason: only for checks listed under Choices. Copy exactly one code from
+  that list that best fits the claim, with a one-sentence reason, or leave both empty if none
+  fits. Never suggest a code that is not in the list.
+Only use the facts given. Do not invent rules, limits, codes, prices or amounts. No FHIR jargon.
 
-    context = (
-        f"Claim ID: {claim.get('id', 'unknown')}\n"
-        f"Patient: {claim.get('patient_name', 'Unknown')}\n"
-        f"Facility: {claim.get('facility_name', 'Unknown')}\n"
-        f"Diagnosis: {claim.get('diagnosis_code', '')} — "
-        f"{claim.get('diagnosis_description', '')}\n"
-        f"{dept_context}\n"
+Claim context (no patient details are shared):
+{claim_context(claim)}
+
+Failed checks:
+{failures}
+
+{choices}
+
+Return one entry per rule_id."""
+
+
+def _fallback(error: dict) -> dict:
+    return {"text": error["suggestion"], "fix_steps": []}
+
+
+def _ask_gemini(client, errors: list[dict], claim: dict, targets=None) -> Optional[dict[str, Explanation]]:
+    prompt = build_prompt(errors, claim, targets)
+    config_ = types.GenerateContentConfig(
+        response_mime_type="application/json",
+        response_schema=list[Explanation],
+        temperature=0.2,
     )
+    for model in dict.fromkeys([config.GEMINI_MODEL, config.GEMINI_FALLBACK_MODEL]):  # one retry
+        if not model:
+            continue
+        try:
+            response = client.models.generate_content(model=model, contents=prompt, config=config_)
+            parsed = response.parsed or []
+            return {e.rule_id: e for e in parsed if isinstance(e, Explanation)}
+        except Exception as exc:
+            logger.warning("Gemini %s failed: %s", model, str(exc)[:200])
+    return None
 
-    prompt = f"""You are ClaimSense, helping hospital claims officers at SHA Kenya fix insurance claims.
 
-Explain each validation failure below in simple, direct language a non-technical hospital clerk can act on.
-No jargon. No FHIR, ICD-10 subcode, adjudication. Write as if speaking to someone at a hospital reception desk.
+def explain_errors(errors: list[dict], claim: dict, targets: Optional[dict] = None) -> tuple[dict[str, dict], bool]:
+    """
+    Returns ({rule_id: {"text": str, "fix_steps": [str], "pick": {"code", "reason"}?}}, ai_used).
+    targets (suggest/enrich.py) adds a validated list of choices for some rules; Gemini may
+    pick one. ai_used is True only if every explanation came from Gemini (now or cached).
+    """
+    from suggest.enrich import cache_suffix
 
-Claim context:
-{context}
+    if not errors:
+        return {}, False
+    targets = targets or {}
 
-Errors to explain:
-{error_lines}
+    def key(error):
+        return cache.key_for(error["rule_id"], error["message"] + cache_suffix(targets.get(error["rule_id"])))
 
-Respond ONLY with a valid JSON object. One key per rule_id, value is 2-3 sentences explaining
-what went wrong, why SHA cares, and what to do.
+    explanations: dict[str, dict] = {}
+    missing = []
+    for error in errors:
+        hit = cache.get(key(error))
+        if hit:
+            explanations[error["rule_id"]] = hit
+        else:
+            missing.append(error)
 
-Example:
-{{
-  "MISSING_FIELDS": "The patient ID is missing. SHA cannot process a claim without knowing who was treated. Ask the patient for their SHA membership card and enter the number shown on it."
-}}"""
-
-    try:
-        response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=prompt,
-        )
-
-        raw = response.text.strip()
-
-        if raw.startswith("```"):
-            parts = raw.split("```")
-            raw = parts[1].lstrip("json").strip() if len(parts) >= 2 else raw
-
-        parsed = json.loads(raw)
-
-        for e in errors:
-            if e["rule_id"] not in parsed:
-                parsed[e["rule_id"]] = e["suggestion"]
-
-        logger.info("Gemini explained %d error(s) successfully", len(errors))
-        return parsed, True
-
-    except json.JSONDecodeError as exc:
-        logger.warning("Gemini response not valid JSON (%s) — using fallback", exc)
-        return {e["rule_id"]: e["suggestion"] for e in errors}, False
-
-    except Exception as exc:
-        logger.error("Gemini API call failed: %s", exc)
-        return {e["rule_id"]: e["suggestion"] for e in errors}, False
+    ai_used = True
+    if missing:
+        client = _get_client()
+        answers = _ask_gemini(client, missing, claim, targets) if client else None
+        for error in missing:
+            answer = (answers or {}).get(error["rule_id"])
+            if answer:
+                value = {"text": answer.plain_explanation, "fix_steps": answer.fix_steps}
+                if answer.pick_code:
+                    value["pick"] = {"code": answer.pick_code.strip().upper(), "reason": answer.pick_reason or ""}
+                cache.put(key(error), value)
+                explanations[error["rule_id"]] = value
+            else:
+                explanations[error["rule_id"]] = _fallback(error)
+                ai_used = False
+        if answers:
+            logger.info("Gemini explained %d of %d failed check(s)", len(answers), len(missing))
+    return explanations, ai_used
