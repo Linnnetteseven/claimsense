@@ -9,6 +9,7 @@ Claim fields used (internal claim shape, not FHIR):
   patient_id, facility_code, visit_date, diagnosis_code, coverage_end_date,
   claimed_amount, fund ("SHIF" | "PHC" | "ECCIF"), preauth_ref, facility_level ("2".."6"),
   billable_start / billable_end (default: visit_date / discharge_date or visit_date),
+  practitioner_id (PUID), practitioner_name,
   items[]: sequence, service_code, description, quantity, unit_price, net,
            service_start, service_end
 
@@ -430,6 +431,28 @@ def check_coverage_active(claim: dict) -> Optional[Finding]:
     )
 
 
+def check_fhir_bundle(claim: dict) -> Optional[Finding]:
+    # Imported here: the bundle builder uses helpers from this module.
+    from fhir.bundle_checks import COVERED_BY_CLAIM_RULES, check_bundle
+    from fhir.kenya_bundle_builder import build_kenya_eclaims_bundle
+
+    issues = [
+        i for i in check_bundle(build_kenya_eclaims_bundle(claim))
+        if i.check_id not in COVERED_BY_CLAIM_RULES
+    ]
+    if not issues:
+        return None
+    fields = sorted({f for i in issues for f in i.fields})
+    if "practitioner_id" in fields:
+        fields.append("practitioner_name")
+    return Finding(
+        "; ".join(i.message for i in issues),
+        "SHA rejects claim bundles whose parts do not link up. For a missing practitioner, enter the "
+        "treating practitioner's registry number (PUID) and name.",
+        fields=fields or None,
+    )
+
+
 def check_amount_reasonable(claim: dict) -> Optional[Finding]:
     claimed = _to_float(claim.get("claimed_amount"))
     maternity = _is_maternity(claim)
@@ -502,6 +525,8 @@ REGISTRY: list[Rule] = [
          AFYALINK, "AfyaLink: claim total equals the sum of item net", check_total_equals_net),
     Rule("PHC_ZERO_TOTAL", "1", "error", ("claimed_amount",),
          AFYALINK, "AfyaLink: PHC claims have a zero total", check_phc_zero_total),
+    Rule("FHIR_BUNDLE_VALID", "1", "error", ("practitioner_id", "practitioner_name"),
+         AFYALINK, "AfyaLink: bundle references resolve; care team names a Practitioner", check_fhir_bundle),
     Rule("COVERAGE_EXPIRED", "1", "error", ("coverage_end_date",), None, _LOCAL, check_coverage_active),
     Rule("MISSING_PARTOGRAPH", "1", "error", ("partograph_id",), None, _SOP, check_partograph),
     Rule("MISSING_POSTOP_NOTES", "1", "error", ("postop_notes_attached",), None, _SOP, check_postop_notes),
@@ -516,4 +541,4 @@ REGISTRY: list[Rule] = [
 
 RULES_BY_ID = {rule.id: rule for rule in REGISTRY}
 # Bump when any rule changes; returned with every validation result.
-RULESET_VERSION = "2026.09-v2.1"
+RULESET_VERSION = "2026.09-v3"

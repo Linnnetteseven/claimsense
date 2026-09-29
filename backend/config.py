@@ -83,6 +83,12 @@ class _Config:
         default=True,
     )
 
+    # Base for IG code system, identifier and profile URLs. UAT prefix from the eClaims IG.
+    SHA_TERMINOLOGY_BASE: str = os.getenv(
+        "SHA_TERMINOLOGY_BASE",
+        "https://nshr-uat.sha.go.ke/fhir",
+    ).rstrip("/")
+
     SHA_FHIR_TIMEOUT: float = float(
         os.getenv(
             "SHA_FHIR_TIMEOUT",

@@ -10,6 +10,7 @@ Routes:
   POST /claims/{id}/submit         POST ClaimResponse to openIMIS (mock or live)
   POST /validate                   validate any arbitrary claim dict (for re-validation)
   GET  /claims/{id}/audit          hash-chain audit history for one claim
+  GET  /claims/{id}/bundle         Kenya eClaims submission Bundle + structural checks
   POST /claims/{id}/reset          demo: restore one claim to its seeded state
   POST /demo/reset                 demo: restore all seeded claims, drop UI-created ones
   GET  /audit/verify               recompute and verify the audit chain
@@ -33,6 +34,8 @@ from config import config
 from validation.engine import validate
 from fhir.builder import build_claim_response
 from fhir.client import openimis
+from fhir.bundle_checks import check_bundle
+from fhir.kenya_bundle_builder import build_kenya_eclaims_bundle
 from llm.explainer import explain_errors
 from repositories.claims import ClaimsRepository
 from audit import chain
@@ -276,6 +279,22 @@ async def correct_claim(claim_id: str, corrections: dict):
     return {"claim": saved, "validation": result}
 
 
+def _bundle_with_checks(claim: dict) -> dict:
+    bundle = build_kenya_eclaims_bundle(claim)
+    issues = check_bundle(bundle)
+    return {
+        "bundle": bundle,
+        "checks_passed": not issues,
+        "issues": [{"check_id": i.check_id, "message": i.message, "fields": i.fields} for i in issues],
+    }
+
+
+@app.get("/claims/{claim_id}/bundle")
+async def get_claim_bundle(claim_id: str):
+    """The SHA eClaims submission Bundle this claim would produce, with pre-submission checks."""
+    return _bundle_with_checks(get_claim_or_404(claim_id, claims_repository()))
+
+
 def _require_demo_reset() -> None:
     if not config.DEMO_RESET_ENABLED:
         raise HTTPException(status_code=403, detail="Demo reset is disabled on this deployment")
@@ -329,6 +348,15 @@ async def submit_claim(claim_id: str):
             ),
         )
 
+    # Structural bundle checks run before any submission.
+    sha_bundle = _bundle_with_checks(claim)
+    if not sha_bundle["checks_passed"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot submit: the SHA bundle failed checks: "
+            + "; ".join(i["message"] for i in sha_bundle["issues"]),
+        )
+
     fhir_cr = build_claim_response(claim, result)
 
     if config.use_mock:
@@ -339,6 +367,7 @@ async def submit_claim(claim_id: str):
             "claim_id": claim_id,
             "score": result["score"],
             "fhir_claim_response": fhir_cr,
+            "sha_bundle": sha_bundle["bundle"],
             "note": "Set OPENIMIS_TOKEN in .env to submit to the live instance.",
         }
 

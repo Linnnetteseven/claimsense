@@ -41,6 +41,8 @@ def _base_claim(**overrides) -> dict:
         "coverage_start_date": "2024-01-01",
         "coverage_end_date": "2099-01-01",
         "fund": "SHIF",
+        "practitioner_id": "PUID-0000001-1",
+        "practitioner_name": "Dr. Test",
         "items": [_item()],
         "claimed_amount": 1500,
     }
@@ -263,6 +265,16 @@ class TestDepartmentRules:
         claim = _base_claim(department="surgical", overnight_stay=True)
         assert not check("MISSING_POSTOP_NOTES", claim).passed
         assert check("MISSING_POSTOP_NOTES", {**claim, "postop_notes_attached": "DS-1"}).passed
+
+
+class TestFhirBundleRule:
+    def test_missing_practitioner_fails_with_fields(self):
+        result = check("FHIR_BUNDLE_VALID", _base_claim(practitioner_id=""))
+        assert not result.passed and "practitioner_id" in result.fields
+
+    def test_total_mismatch_is_not_double_counted(self):
+        # TOTAL_EQUALS_NET_SUM reports this; the bundle rule skips it.
+        assert check("FHIR_BUNDLE_VALID", _base_claim(claimed_amount=1)).passed
 
 
 class TestFixMetadata:

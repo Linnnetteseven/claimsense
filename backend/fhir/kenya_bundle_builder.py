@@ -1,515 +1,255 @@
 """
-Kenya eClaims Bundle builder.
+Kenya eClaims Claim Bundle builder.
 
-Builds the provider-side Bundle described by the Kenya eClaims
-implementation guidance.
+Builds the provider-side submission Bundle from Hakiki's internal claim shape,
+following the AfyaLink claim integration guide and the DHA Kenya eClaims FHIR IG
+(KenyaClaimSubmission profile and its examples):
 
-The Bundle contains:
-    Claim
-    Patient
-    Coverage
-    Provider Organization
-    SHA Organization
-    Encounter
-    Condition
+  - Bundle.type "message", MessageHeader first (required by FHIR for messages)
+  - fullUrl on every entry; every reference points at a fullUrl in the Bundle
+  - Claim, Patient, Coverage, provider and insurer Organization, Practitioner
+  - Claim.insurance -> Coverage, Claim.careTeam -> Practitioner
+  - items with sequence, servicedPeriod, category, net and SHA intervention codes
+  - diagnosis coded with the ICD-11 code system
 
-This is a submission artifact.
+Code system and identifier URLs are built from SHA_TERMINOLOGY_BASE (UAT prefix by default).
+Not confirmed against SHA UAT: the MessageHeader event code, and whether UAT expects
+Encounter/Condition resources as well. Run fhir.bundle_checks.check_bundle() before
+submitting.
 
-It is NOT a ClaimResponse.
+It does not invent patient demographics or coverage details; missing inputs leave
+the matching elements out so bundle_checks and the validation rules report them.
 """
 
 from datetime import datetime, timezone
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid5
+
+from config import config
+from validation.rules import billable_period, item_net, net_total
+
+HL7 = "http://terminology.hl7.org/CodeSystem"
 
 
-BASE_PROFILE = "https://fhir.dha.go.ke/claims/StructureDefinition"
-
-CLAIM_PROFILE = (
-    f"{BASE_PROFILE}/ke-eclaims-claimsubmission"
-)
-
-PATIENT_PROFILE = (
-    f"{BASE_PROFILE}/ke-eclaims-patient"
-)
-
-COVERAGE_PROFILE = (
-    f"{BASE_PROFILE}/ke-eclaims-coverage"
-)
-
-ORGANIZATION_PROFILE = (
-    f"{BASE_PROFILE}/ke-eclaims-organization"
-)
-
-ENCOUNTER_PROFILE = (
-    f"{BASE_PROFILE}/ke-eclaims-encounter"
-)
-
-CONDITION_PROFILE = (
-    f"{BASE_PROFILE}/ke-eclaims-condition"
-)
+def _base() -> str:
+    return config.SHA_TERMINOLOGY_BASE.rstrip("/")
 
 
-def _reference(resource_type: str, resource_id: str) -> dict:
-    return {
-        "reference": f"{resource_type}/{resource_id}"
-    }
+def code_system(name: str) -> str:
+    return f"{_base()}/CodeSystem/{name}"
 
 
-def _profile(profile_url: str) -> dict:
-    return {
-        "profile": [profile_url]
-    }
+def identifier_system(name: str) -> str:
+    return f"{_base()}/Identifier/{name}"
+
+
+def profile(name: str) -> dict:
+    return {"profile": [f"{_base()}/StructureDefinition/{name}"]}
+
+
+def _full_url(claim_id: str, kind: str) -> str:
+    """Stable urn:uuid per claim and resource, so rebuilding gives the same Bundle ids."""
+    return f"urn:uuid:{uuid5(NAMESPACE_URL, f'hakiki/{claim_id}/{kind}')}"
+
+
+def _ref(full_url: str) -> dict:
+    return {"reference": full_url}
+
+
+def _money(value) -> dict:
+    return {"value": round(float(value or 0), 2), "currency": "KES"}
+
+
+def _coding(system: str, code: str, display: str = "") -> dict:
+    coding = {"system": system, "code": code}
+    if display:
+        coding["display"] = display
+    return {"coding": [coding]}
+
+
+def claim_subtype(claim: dict) -> str:
+    """IG claim-subtype-cs code. Explicit claim_subtype wins; else inpatient if the stay spans days."""
+    if claim.get("claim_subtype"):
+        return str(claim["claim_subtype"])
+    start, end = billable_period(claim)
+    return "inpatient" if start and end and end > start else "outpatient"
 
 
 def build_kenya_eclaims_bundle(claim: dict) -> dict:
-    """
-    Convert ClaimSense's internal claim representation into
-    a self-contained Kenya eClaims collection Bundle.
-
-    The function intentionally keeps unknown fields conservative.
-    It does not invent patient demographics or coverage details.
-    """
-
-    claim_id = claim.get("id") or f"CLM-{uuid4()}"
-
-    patient_id = claim.get("patient_id") or f"patient-{claim_id}"
-    facility_id = (
-        claim.get("facility_code")
-        or f"provider-{claim_id}"
-    )
-
-    encounter_id = (
-        claim.get("encounter_id")
-        or f"enc-{claim_id}"
-    )
-
-    condition_id = (
-        claim.get("condition_id")
-        or f"condition-{claim_id}"
-    )
-
-    coverage_id = (
-        claim.get("coverage_id")
-        or f"coverage-{claim_id}"
-    )
-
-    sha_org_id = (
-        claim.get("insurer_id")
-        or "sha"
-    )
-
-    provider_org_id = facility_id
-
-    visit_date = (
-        claim.get("visit_date")
-        or datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    )
-
-    patient_name = claim.get(
-        "patient_name",
-        "Unknown Patient",
-    )
-
-    facility_name = claim.get(
-        "facility_name",
-        "Unknown Facility",
-    )
-
-    diagnosis_code = claim.get(
-        "diagnosis_code",
-        "",
-    )
-
-    diagnosis_description = claim.get(
-        "diagnosis_description",
-        "",
-    )
-
-    # ---------------------------------------------------------
-    # Patient
-    # ---------------------------------------------------------
-
-    patient = {
-        "resourceType": "Patient",
-        "id": patient_id,
-        "meta": _profile(PATIENT_PROFILE),
-        "identifier": [],
-        "name": [
-            {
-                "text": patient_name,
-            }
-        ],
+    claim_id = str(claim.get("id") or "draft")
+    urls = {
+        kind: _full_url(claim_id, kind)
+        for kind in ("header", "claim", "patient", "coverage", "provider", "insurer", "practitioner")
     }
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    start, end = billable_period(claim)
 
-    # Preserve SHA/NATIONAL ID if supplied by the draft.
-    if claim.get("sha_number"):
-        patient["identifier"].append(
-            {
-                "type": {
-                    "coding": [
-                        {
-                            "system": (
-                                "https://fhir.dha.go.ke/"
-                                "claims/CodeSystem/"
-                                "identifier-type"
-                            ),
-                            "code": "SHA-NUMBER",
-                        }
-                    ]
-                },
-                "value": claim["sha_number"],
-            }
-        )
-
-    elif claim.get("national_id"):
-        patient["identifier"].append(
-            {
-                "type": {
-                    "coding": [
-                        {
-                            "system": (
-                                "https://fhir.dha.go.ke/"
-                                "claims/CodeSystem/"
-                                "identifier-type"
-                            ),
-                            "code": "NATIONAL-ID",
-                        }
-                    ]
-                },
-                "value": claim["national_id"],
-            }
-        )
-
-    if claim.get("gender"):
-        patient["gender"] = claim["gender"]
-
+    # --- Patient -----------------------------------------------------------
+    patient = {"resourceType": "Patient", "meta": profile("ke-eclaims-patient"), "identifier": []}
+    if claim.get("patient_id"):
+        patient["identifier"].append({
+            "type": _coding(code_system("identifier-types-cs"), "SHA-NUMBER", "SHA Number"),
+            "system": identifier_system("sha-number"),
+            "value": str(claim["patient_id"]),
+        })
+    if claim.get("patient_name"):
+        patient["name"] = [{"text": claim["patient_name"]}]
+    gender = {"F": "female", "M": "male"}.get(str(claim.get("gender", "")).upper())
+    if gender:
+        patient["gender"] = gender
     if claim.get("dob"):
         patient["birthDate"] = claim["dob"]
 
-    # ---------------------------------------------------------
-    # Provider Organization
-    # ---------------------------------------------------------
-
+    # --- Organizations -----------------------------------------------------
     provider = {
         "resourceType": "Organization",
-        "id": provider_org_id,
-        "meta": _profile(ORGANIZATION_PROFILE),
+        "meta": profile("ke-eclaims-organization"),
         "active": True,
+        "name": claim.get("facility_name") or "",
         "identifier": [],
-        "name": facility_name,
     }
-
     if claim.get("facility_code"):
-        provider["identifier"].append(
-            {
-                "value": claim["facility_code"],
-            }
-        )
-
-    # ---------------------------------------------------------
-    # SHA Organization
-    # ---------------------------------------------------------
-
+        provider["identifier"].append({
+            "use": "official",
+            "type": _coding(f"{HL7}/v2-0203", "PRN", "Provider number"),
+            "value": str(claim["facility_code"]),
+        })
     insurer = {
         "resourceType": "Organization",
-        "id": sha_org_id,
-        "meta": _profile(ORGANIZATION_PROFILE),
+        "meta": profile("ke-eclaims-organization"),
         "active": True,
-        "name": "Social Health Authority Kenya",
+        "name": "Social Health Authority",
     }
 
-    # ---------------------------------------------------------
-    # Encounter
-    # ---------------------------------------------------------
+    # --- Practitioner (only when the claim names one) ----------------------
+    practitioner = None
+    if claim.get("practitioner_id"):
+        practitioner = {
+            "resourceType": "Practitioner",
+            "meta": profile("ke-eclaims-practitioner"),
+            "identifier": [{
+                "type": _coding(code_system("identifier-types-cs"), "SHA-NUMBER", "SHA Number"),
+                "system": identifier_system("provider-number"),
+                "value": str(claim["practitioner_id"]),
+            }],
+        }
+        if claim.get("practitioner_name"):
+            practitioner["name"] = [{"text": claim["practitioner_name"]}]
 
-    encounter = {
-        "resourceType": "Encounter",
-        "id": encounter_id,
-        "meta": _profile(ENCOUNTER_PROFILE),
-        "status": "finished",
-        "class": {
-            "system": (
-                "http://terminology.hl7.org/"
-                "CodeSystem/v3-ActCode"
-            ),
-            "code": "AMB",
-            "display": "ambulatory",
-        },
-        "subject": _reference(
-            "Patient",
-            patient_id,
-        ),
-        "period": {
-            "start": visit_date,
-            "end": visit_date,
-        },
-        "serviceProvider": _reference(
-            "Organization",
-            provider_org_id,
-        ),
-    }
-
-    # ---------------------------------------------------------
-    # Condition
-    # ---------------------------------------------------------
-
-    condition = {
-        "resourceType": "Condition",
-        "id": condition_id,
-        "meta": _profile(CONDITION_PROFILE),
-        "clinicalStatus": {
-            "coding": [
-                {
-                    "system": (
-                        "http://terminology.hl7.org/"
-                        "CodeSystem/condition-clinical"
-                    ),
-                    "code": "active",
-                }
-            ]
-        },
-        "verificationStatus": {
-            "coding": [
-                {
-                    "system": (
-                        "http://terminology.hl7.org/"
-                        "CodeSystem/condition-ver-status"
-                    ),
-                    "code": "confirmed",
-                }
-            ]
-        },
-        "code": {
-            "coding": [],
-            "text": diagnosis_description,
-        },
-        "subject": _reference(
-            "Patient",
-            patient_id,
-        ),
-        "encounter": _reference(
-            "Encounter",
-            encounter_id,
-        ),
-    }
-
-    if diagnosis_code:
-        condition["code"]["coding"].append(
-            {
-                "code": diagnosis_code,
-                "display": diagnosis_description,
-            }
-        )
-
-    # ---------------------------------------------------------
-    # Coverage
-    # ---------------------------------------------------------
-
+    # --- Coverage ----------------------------------------------------------
     coverage = {
         "resourceType": "Coverage",
-        "id": coverage_id,
-        "meta": _profile(COVERAGE_PROFILE),
+        "meta": profile("ke-eclaims-coverage"),
         "status": "active",
-        "beneficiary": _reference(
-            "Patient",
-            patient_id,
-        ),
-        "payor": [
-            _reference(
-                "Organization",
-                sha_org_id,
-            )
-        ],
+        "beneficiary": _ref(urls["patient"]),
+        "payor": [_ref(urls["insurer"])],
     }
+    if claim.get("patient_id"):
+        coverage["identifier"] = [{
+            "system": identifier_system("coverage-number"),
+            "value": f"{claim['patient_id']}-sha-coverage",
+        }]
+    period = {k: v for k, v in (("start", claim.get("coverage_start_date")), ("end", claim.get("coverage_end_date"))) if v}
+    if period:
+        coverage["period"] = period
 
-    if claim.get("coverage_start_date"):
-        coverage["period"] = {
-            "start": claim["coverage_start_date"],
+    # --- Claim -------------------------------------------------------------
+    items = []
+    for item in claim.get("items") or []:
+        entry = {
+            "sequence": item.get("sequence"),
+            "productOrService": _coding(
+                code_system("KenyaSocialHealthAuthorityInterventionCS"),
+                str(item.get("service_code", "")),
+                item.get("description", ""),
+            ),
+            "category": _coding(f"{HL7}/ex-benefitcategory", "1", "Medical Care"),
+            "quantity": {"value": float(item.get("quantity") or 0)},
+            "unitPrice": _money(item.get("unit_price")),
+            "net": _money(item_net(item)),
         }
-
-        if claim.get("coverage_end_date"):
-            coverage["period"]["end"] = (
-                claim["coverage_end_date"]
-            )
-
-    if claim.get("scheme_code"):
-        coverage["class"] = [
-            {
-                "type": {
-                    "coding": [
-                        {
-                            "code": "plan",
-                        }
-                    ]
-                },
-                "value": claim["scheme_code"],
-            }
-        ]
-
-    # ---------------------------------------------------------
-    # Claim
-    # ---------------------------------------------------------
+        served = {k: item.get(f"service_{k}") for k in ("start", "end") if item.get(f"service_{k}")}
+        if served:
+            entry["servicedPeriod"] = served
+        if practitioner:
+            entry["careTeamSequence"] = [1]
+        items.append(entry)
 
     claim_resource = {
         "resourceType": "Claim",
-        "id": claim_id,
-        "meta": _profile(CLAIM_PROFILE),
-        "identifier": [
-            {
-                "system": (
-                    claim.get("claim_identifier_system")
-                    or "https://claimsense.ke/claim"
-                ),
-                "value": claim_id,
-            }
-        ],
+        "meta": profile("ke-eclaims-claimsubmission"),
+        "identifier": [{"system": identifier_system("claim-number"), "value": claim_id}],
         "status": "active",
-        "type": {
-            "coding": [
-                {
-                    "system": (
-                        "http://terminology.hl7.org/"
-                        "CodeSystem/claim-type"
-                    ),
-                    "code": "professional",
-                }
-            ]
-        },
+        "type": _coding(code_system("claim-type-cs"), "institutional", "Institutional"),
+        "subType": _coding(code_system("claim-subtype-cs"), claim_subtype(claim)),
         "use": "claim",
-        "patient": _reference(
-            "Patient",
-            patient_id,
-        ),
-        "created": datetime.now(
-            timezone.utc
-        ).strftime("%Y-%m-%d"),
-        "provider": _reference(
-            "Organization",
-            provider_org_id,
-        ),
-        "insurer": _reference(
-            "Organization",
-            sha_org_id,
-        ),
-        "priority": {
-            "coding": [
-                {
-                    "system": (
-                        "http://terminology.hl7.org/"
-                        "CodeSystem/processpriority"
-                    ),
-                    "code": "normal",
-                }
-            ]
-        },
-        "insurance": [
-            {
-                "sequence": 1,
-                "focal": True,
-                "coverage": _reference(
-                    "Coverage",
-                    coverage_id,
-                ),
-            }
-        ],
-        "billablePeriod": {
-            "start": visit_date,
-            "end": visit_date,
-        },
-        "diagnosis": [],
-        "item": [],
-        "total": {
-            "value": float(
-                claim.get("claimed_amount", 0)
-            ),
-            "currency": "KES",
-        },
+        "patient": _ref(urls["patient"]),
+        "created": now,
+        "insurer": _ref(urls["insurer"]),
+        "provider": _ref(urls["provider"]),
+        "priority": _coding(f"{HL7}/processpriority", "normal", "Normal"),
+        "payee": {"type": _coding(f"{HL7}/payeetype", "provider", "Provider")},
+        "insurance": [{"sequence": 1, "focal": True, "coverage": _ref(urls["coverage"])}],
+        "item": items,
+        "total": _money(net_total(claim)),
+        "extension": [{
+            "url": f"{_base()}/StructureDefinition/eclaims-patient-invoice",
+            "extension": [
+                {"url": "invoiceNumber", "valueString": claim_id},
+                {"url": "invoiceDate", "valueDate": now[:10]},
+                {"url": "invoiceAmount", "valueMoney": _money(claim.get("claimed_amount"))},
+            ],
+        }],
     }
+    if start and end:
+        claim_resource["billablePeriod"] = {"start": start.isoformat(), "end": end.isoformat()}
+    if practitioner:
+        claim_resource["careTeam"] = [{
+            "sequence": 1,
+            "provider": _ref(urls["practitioner"]),
+            "role": _coding(code_system("claim-care-team-role-cs"), "PRIMARY", "Primary provider"),
+        }]
+    if claim.get("diagnosis_code"):
+        claim_resource["diagnosis"] = [{
+            "sequence": 1,
+            "diagnosisCodeableConcept": _coding(
+                code_system("icd11-codes-cs"),
+                str(claim["diagnosis_code"]).strip().upper(),
+                claim.get("diagnosis_description", ""),
+            ),
+        }]
+    if claim.get("preauth_ref"):
+        claim_resource["insurance"][0]["preAuthRef"] = [str(claim["preauth_ref"])]
 
-    if diagnosis_code:
-        claim_resource["diagnosis"].append(
-            {
-                "sequence": 1,
-                "diagnosisCodeableConcept": {
-                    "coding": [
-                        {
-                            "code": diagnosis_code,
-                            "display": diagnosis_description,
-                        }
-                    ]
-                },
-            }
-        )
-
-    for index, item in enumerate(
-        claim.get("items", []),
-        start=1,
-    ):
-        service_code = item.get(
-            "service_code",
-            "",
-        )
-
-        item_resource = {
-            "sequence": index,
-            "productOrService": {
-                "coding": [
-                    {
-                        "code": service_code,
-                        "display": item.get(
-                            "description",
-                            "",
-                        ),
-                    }
-                ]
-            },
-            "quantity": {
-                "value": float(
-                    item.get("quantity", 1)
-                )
-            },
-            "unitPrice": {
-                "value": float(
-                    item.get("unit_price", 0)
-                ),
-                "currency": "KES",
-            },
-        }
-
-        claim_resource["item"].append(
-            item_resource
-        )
-
-    # ---------------------------------------------------------
-    # Bundle
-    # ---------------------------------------------------------
+    # --- MessageHeader + Bundle -------------------------------------------
+    header = {
+        "resourceType": "MessageHeader",
+        # Event code not confirmed against SHA UAT.
+        "eventCoding": {"system": code_system("message-event"), "code": "claim-submission"},
+        "source": {"endpoint": f"urn:hakiki:facility:{claim.get('facility_code') or 'unknown'}"},
+        "sender": _ref(urls["provider"]),
+        "focus": [_ref(urls["claim"])],
+    }
 
     resources = [
-        claim_resource,
-        patient,
-        coverage,
-        provider,
-        insurer,
-        encounter,
-        condition,
+        ("header", header),
+        ("claim", claim_resource),
+        ("patient", patient),
+        ("coverage", coverage),
+        ("provider", provider),
+        ("insurer", insurer),
     ]
+    if practitioner:
+        resources.append(("practitioner", practitioner))
 
-    bundle = {
+    entries = []
+    for kind, resource in resources:
+        resource["id"] = urls[kind].rsplit(":", 1)[-1]
+        entries.append({"fullUrl": urls[kind], "resource": resource})
+
+    return {
         "resourceType": "Bundle",
-        "id": f"B-{claim_id}",
-        "type": "collection",
-        "timestamp": datetime.now(
-            timezone.utc
-        ).isoformat(),
-        "entry": [
-            {
-                "fullUrl": (
-                    f"urn:uuid:{uuid4()}"
-                ),
-                "resource": resource,
-            }
-            for resource in resources
-        ],
+        "id": _full_url(claim_id, "bundle").rsplit(":", 1)[-1],
+        "type": "message",
+        "timestamp": now,
+        "entry": entries,
     }
-
-    return bundle

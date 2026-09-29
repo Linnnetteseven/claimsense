@@ -13,6 +13,7 @@ from typing import Any
 import httpx
 
 from config import config
+from fhir.claim_state import parse_claim_state
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +116,30 @@ class SHAClient:
             )
 
             return self._parse_response(response)
+
+    async def claim_status(self, claim_id: str) -> dict:
+        """
+        Latest SHA ClaimResponse for a claim, with its claim state parsed.
+
+        STUB: the AfyaLink guide describes polling claim status (the submission
+        response returns an id to poll with), but the exact endpoint has not been
+        confirmed against UAT. This searches ClaimResponse by request, which is the
+        standard FHIR way and may need changing once UAT access is tested.
+        """
+        url = f"{self.base_url}/ClaimResponse"
+        async with httpx.AsyncClient(
+            headers=self.headers,
+            verify=config.SHA_FHIR_VERIFY_SSL,
+            timeout=httpx.Timeout(20.0),
+        ) as client:
+            response = await client.get(
+                url, params={"request": f"Claim/{claim_id}", "_sort": "-_lastUpdated", "_count": 1}
+            )
+        result = self._parse_response(response)
+        entries = (result["resource"] or {}).get("entry") or [] if result["ok"] else []
+        claim_response = entries[0].get("resource") if entries else None
+        result["claim_state"] = parse_claim_state(claim_response) if claim_response else None
+        return result
 
     async def get_claim(self, claim_id: str) -> dict:
         """Read a Claim from SHA UAT."""

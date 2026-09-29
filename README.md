@@ -229,6 +229,7 @@ Claims are scored by deterministic rules defined in a registry in `backend/valid
 | `ITEM_SEQUENCE_VALID` | Item sequences are 1..n with no gaps or repeats (repeated codes are allowed) | 🔴 Error | [AfyaLink guide][afyalink] |
 | `TOTAL_EQUALS_NET_SUM` | Claim total equals the sum of item net amounts exactly | 🔴 Error | [AfyaLink guide][afyalink] |
 | `PHC_ZERO_TOTAL` | Primary Health Care fund claims have a zero total | 🔴 Error | [AfyaLink guide][afyalink] |
+| `FHIR_BUNDLE_VALID` | The generated SHA bundle is sound: every reference resolves, care team names a Practitioner (PUID) | 🔴 Error | [AfyaLink guide][afyalink] |
 | `COVERAGE_EXPIRED` | Cover had not expired on the visit date | 🔴 Error | Local check |
 | `MISSING_PARTOGRAPH` | Maternity claims link a partograph record | 🔴 Error | Facility SOP |
 | `MISSING_POSTOP_NOTES` | Surgical overnight stays have post-op notes | 🔴 Error | Facility SOP |

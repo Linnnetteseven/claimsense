@@ -95,3 +95,10 @@ def test_create_without_id_generates_one(client):
     del claim["id"]
     body = api.post("/claims", json=claim).json()
     assert body["claim"]["id"].startswith("SHA-CLM-") and body["claim"]["id"] in repo.rows
+
+
+def test_bundle_endpoint_runs_checks(client):
+    api, _ = client
+    body = api.get("/claims/SEED-1/bundle").json()
+    assert body["bundle"]["type"] == "message"
+    assert body["checks_passed"] is True and body["issues"] == []

@@ -223,6 +223,9 @@ function makeClaim(index) {
     ...(diagnosis.department === "maternity" ? { partograph_id: `PG-${pad(index + 1, 5)}` } : {}),
     fund,
     ...(preauthRef ? { preauth_ref: preauthRef } : {}),
+    // Demo registry numbers, not real PUIDs.
+    practitioner_id: `PUID-${pad(10000 + (index % 40), 7)}-${index % 10}`,
+    practitioner_name: `Dr. ${lastNames[(index * 7) % lastNames.length]}`,
 
     coverage_start_date: "2025-01-01",
     coverage_end_date: coverageEndDate,

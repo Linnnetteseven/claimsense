@@ -91,6 +91,8 @@ export const FIELD_INPUTS = {
   billable_end: { label: "Claim period end", type: "date" },
   fund: { label: "Fund", type: "select", options: ["SHIF", "PHC", "ECCIF"] },
   preauth_ref: { label: "Pre-authorization reference", type: "text" },
+  practitioner_id: { label: "Treating practitioner registry number (PUID)", type: "text" },
+  practitioner_name: { label: "Treating practitioner name", type: "text" },
   partograph_id: { label: "Partograph record ID", type: "text" },
   postop_notes_attached: { label: "Post-op notes / discharge summary reference", type: "text" },
   sessions_this_week: { label: "Dialysis sessions this week", type: "number" },
