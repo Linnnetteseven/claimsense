@@ -1,4 +1,4 @@
-"""Supabase data access for ClaimSense draft claims.
+"""Supabase data access for Hakiki claims.
 
 This module deliberately returns the pre-existing internal claim dictionaries.
 Validation and FHIR layers therefore remain independent of Supabase.

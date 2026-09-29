@@ -3,8 +3,9 @@ Builds a valid FHIR R4 ClaimResponse resource from our internal validation outpu
 
 ClaimResponse spec: https://hl7.org/fhir/R4/claimresponse.html
 
-This resource is what openIMIS expects when we POST adjudication results.
-Every validation rule maps to one adjudication entry.
+Hakiki's own pre-adjudication view of a claim: shown in the FHIR Preview tab and sent
+when HIS_DELIVERY=openimis. It is not SHA's ClaimResponse. Every validation rule maps
+to one adjudication entry.
 """
 
 from datetime import datetime, timezone
@@ -81,7 +82,7 @@ def build_claim_response(claim: dict, validation: dict) -> dict:
                 },
             }
         ],
-        # Custom extensions for ClaimSense-specific data
+        # Hakiki-specific extensions (local identifiers, not SHA URLs)
         "extension": [
             {
                 "url": "https://claimsense.ke/fhir/StructureDefinition/validation-score",

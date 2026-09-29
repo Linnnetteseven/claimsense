@@ -1,1 +1,1 @@
-"""Persistence adapters for ClaimSense."""
+"""Persistence adapters for Hakiki."""

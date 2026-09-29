@@ -118,17 +118,12 @@ class _Config:
     )
 
     # ---------------------------------------------------------
-    # Demo / data source
+    # Terminology, access and hand-off
     # ---------------------------------------------------------
-    USE_SUPABASE: bool = _env_bool(
-        "USE_SUPABASE",
-        default=False,
-    )
-
     # Optional WHO ICD API credentials for live ICD-11 code lookup (https://icd.who.int/icdapi).
     ICD_API_CLIENT_ID: str = os.getenv("ICD_API_CLIENT_ID", "")
     ICD_API_CLIENT_SECRET: str = os.getenv("ICD_API_CLIENT_SECRET", "")
-    ICD_API_RELEASE: str = os.getenv("ICD_API_RELEASE", "2024-01")
+    ICD_API_RELEASE: str = os.getenv("ICD_API_RELEASE", "2026-01")  # matches data/icd11_mms.tsv
 
     # Browsers allowed to call the API. Exact origins, plus a pattern for Vercel preview
     # builds of this team's frontend. No cookies are used, so credentials stay off.

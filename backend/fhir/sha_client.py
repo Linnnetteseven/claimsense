@@ -45,7 +45,7 @@ class SHAClient:
         async with httpx.AsyncClient(
             headers=self.headers,
             verify=config.SHA_FHIR_VERIFY_SSL,
-            timeout=httpx.Timeout(30.0),
+            timeout=httpx.Timeout(config.SHA_FHIR_TIMEOUT),
         ) as client:
             response = await client.post(
                 url,
@@ -73,7 +73,7 @@ class SHAClient:
         async with httpx.AsyncClient(
             headers=self.headers,
             verify=config.SHA_FHIR_VERIFY_SSL,
-            timeout=httpx.Timeout(30.0),
+            timeout=httpx.Timeout(config.SHA_FHIR_TIMEOUT),
         ) as client:
             response = await client.post(
                 url,
@@ -103,7 +103,7 @@ class SHAClient:
         async with httpx.AsyncClient(
             headers=self.headers,
             verify=config.SHA_FHIR_VERIFY_SSL,
-            timeout=httpx.Timeout(30.0),
+            timeout=httpx.Timeout(config.SHA_FHIR_TIMEOUT),
         ) as client:
             response = await client.post(
                 url,
@@ -130,7 +130,7 @@ class SHAClient:
         async with httpx.AsyncClient(
             headers=self.headers,
             verify=config.SHA_FHIR_VERIFY_SSL,
-            timeout=httpx.Timeout(20.0),
+            timeout=httpx.Timeout(config.SHA_FHIR_TIMEOUT),
         ) as client:
             response = await client.get(
                 url, params={"request": f"Claim/{claim_id}", "_sort": "-_lastUpdated", "_count": 1}
@@ -148,7 +148,7 @@ class SHAClient:
         async with httpx.AsyncClient(
             headers=self.headers,
             verify=config.SHA_FHIR_VERIFY_SSL,
-            timeout=httpx.Timeout(20.0),
+            timeout=httpx.Timeout(config.SHA_FHIR_TIMEOUT),
         ) as client:
             response = await client.get(url)
             return self._parse_response(response)
