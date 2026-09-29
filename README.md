@@ -223,7 +223,7 @@ Claims are scored by deterministic rules defined in a registry in `backend/valid
 | `INVALID_ICD11` | Diagnosis is ICD-11 MMS (stem codes, `&`/`/` postcoordination, no I/O). ICD-10 codes get a specific message. Optional live WHO lookup | 🔴 Error | [AfyaLink guide][afyalink] |
 | `VISIT_DATE` | Visit date well-formed and not in the future | 🔴 Error | Local check |
 | `EMPTY_ITEMS` | At least one item, every item has an intervention code | 🔴 Error | [AfyaLink guide][afyalink] |
-| `SHA_SERVICE_CODE_FORMAT` | Item codes are billable SHA/PMF intervention codes (`SHA-12-001`), not chapter codes | 🔴 Error | [DHA eClaims IG][ig-interventions] |
+| `SHA_SERVICE_CODE_FORMAT` | Item codes are billable SHA/PMF intervention codes (`SHA-12-001`), not chapter codes | 🔴 Error | [MOH OCL][ocl-interventions] |
 | `SERVICED_PERIOD_PRESENT` | Every item has a service start and end date | 🔴 Error | [AfyaLink guide][afyalink] |
 | `SERVICED_PERIOD_IN_BILLABLE` | Item dates fall inside the claim's billable period (date only) | 🔴 Error | [AfyaLink guide][afyalink] |
 | `ITEM_SEQUENCE_VALID` | Item sequences are 1..n with no gaps or repeats (repeated codes are allowed) | 🔴 Error | [AfyaLink guide][afyalink] |
@@ -233,15 +233,15 @@ Claims are scored by deterministic rules defined in a registry in `backend/valid
 | `MISSING_PARTOGRAPH` | Maternity claims link a partograph record | 🔴 Error | Facility SOP |
 | `MISSING_POSTOP_NOTES` | Surgical overnight stays have post-op notes | 🔴 Error | Facility SOP |
 | `ITEM_QUANTITY_VALID` | Item quantities are positive | 🟡 Warning | Local check |
-| `PREAUTH_REQUIRED` | Services flagged for pre-authorization have a reference | 🟡 Warning | [AfyaLink guide][afyalink] |
-| `TARIFF_CEILING` | Unit price not above the tariff for that code | 🟡 Warning | Sample fixture (see below) |
+| `PREAUTH_REQUIRED` | Services flagged for pre-authorization have a reference | 🟡 Warning | [MOH OCL][ocl-interventions] |
+| `TARIFF_CEILING` | Unit price not above the tariff for that code and facility level | 🟡 Warning | [MOH OCL][ocl-interventions] |
 | `AMOUNT_HIGH` | Claim total under the review threshold (maternity higher) | 🟡 Warning | Local check |
 | `IMPLAUSIBLE_FREQUENCY` | Dialysis sessions per week plausible | 🟡 Warning | Facility SOP |
 
-Intervention codes and descriptions in `backend/data/sha_tariffs_sample.csv` come from the [DHA eClaims IG][ig-interventions]. **Tariff and pre-authorization values in that file are samples**, filled only where a source is named in the row; the official SHA tariff schedule could not be retrieved when it was built.
+Intervention codes, pre-authorization flags and level tariffs come from the MOH-Kenya OCL catalogue behind the SHA interventions ValueSet ([OCL][ocl-interventions]), saved in `backend/data/sha_interventions.csv`. Refresh it with `python backend/scripts/fetch_sha_interventions.py`. OCL records tariffs for only a few interventions; where it has none, one clearly labelled sample value (haemodialysis) is used and its source is named in the file.
 
 [afyalink]: https://afyalink.dha.go.ke/claim-integration
-[ig-interventions]: https://build.fhir.org/ig/IntelliSOFT-Consulting/Kenya-eClaims-FHIR-IG/CodeSystem-KenyaSocialHealthAuthorityInterventionCS.html
+[ocl-interventions]: https://ilm-hie.dha.go.ke/ocl/orgs/MOH-KENYA/ValueSet/KenyaSocialHealthAuthorityInterventions/
 
 Scores translate into three tiers:
 

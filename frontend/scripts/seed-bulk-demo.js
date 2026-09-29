@@ -89,7 +89,7 @@ const diagnoses = [
   { code: "GB61.Z", description: "Chronic kidney disease, stage unspecified" },
 ];
 
-// SHA intervention codes from the DHA eClaims IG (see backend/data/sha_tariffs_sample.csv).
+// SHA intervention codes from the MOH OCL catalogue (see backend/data/sha_interventions.csv).
 // Prices are demo values, not tariffs.
 const services = [
   { service_code: "SHA-12-001", description: "Consultation", unit_price: 1200 },

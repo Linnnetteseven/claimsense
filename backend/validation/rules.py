@@ -7,7 +7,7 @@ reads REGISTRY; severity and metadata live here, not inside the checks.
 
 Claim fields used (internal claim shape, not FHIR):
   patient_id, facility_code, visit_date, diagnosis_code, coverage_end_date,
-  claimed_amount, fund ("SHIF" | "PHC" | "ECCIF"), preauth_ref,
+  claimed_amount, fund ("SHIF" | "PHC" | "ECCIF"), preauth_ref, facility_level ("2".."6"),
   billable_start / billable_end (default: visit_date / discharge_date or visit_date),
   items[]: sequence, service_code, description, quantity, unit_price, net,
            service_start, service_end
@@ -24,10 +24,7 @@ from data.sha_tariffs import get_intervention
 from terminology import icd11
 
 AFYALINK = "https://afyalink.dha.go.ke/claim-integration"
-IG_INTERVENTIONS = (
-    "https://build.fhir.org/ig/IntelliSOFT-Consulting/Kenya-eClaims-FHIR-IG/"
-    "CodeSystem-KenyaSocialHealthAuthorityInterventionCS.html"
-)
+OCL_INTERVENTIONS = "https://ilm-hie.dha.go.ke/ocl/orgs/MOH-KENYA/ValueSet/KenyaSocialHealthAuthorityInterventions/"
 
 
 @dataclass
@@ -244,7 +241,8 @@ def check_items_present(claim: dict) -> Optional[Finding]:
     return None
 
 
-_BILLABLE_CODE = re.compile(r"^(SHA|PMF)-\d{2}-\d{3}$")
+# SHA-NN-NNN intervention, optionally a -SI-NNN sub-intervention (e.g. oncology medicines).
+_BILLABLE_CODE = re.compile(r"^(SHA|PMF)-\d{2}-\d{3}(-SI-\d{3})?$")
 _CHAPTER_CODE = re.compile(r"^(SHA|PMF)-\d{2}(-SC-\d{2})?$")
 
 
@@ -386,7 +384,7 @@ def check_preauth(claim: dict) -> Optional[Finding]:
     if str(claim.get("preauth_ref", "")).strip():
         return None
     needing = sorted({
-        f"{info.code} ({info.description})"
+        f"{info.code} ({info.description}; {', '.join(info.preauth)} pre-authorization)"
         for item in _items(claim)
         if (info := get_intervention(item.get("service_code", ""))) and info.requires_preauth
     })
@@ -400,20 +398,23 @@ def check_preauth(claim: dict) -> Optional[Finding]:
 
 def check_tariff_ceiling(claim: dict) -> Optional[Finding]:
     over = []
+    level = str(claim.get("facility_level") or "").strip() or None
     for idx, item in enumerate(_items(claim), start=1):
         info = get_intervention(item.get("service_code", ""))
+        if not info:
+            continue
+        tariff, source = info.tariff_for(level)
         price = _to_float(item.get("unit_price"))
-        if info and info.tariff_kes is not None and price > info.tariff_kes:
+        if tariff is not None and price > tariff:
             over.append(
-                f"{_describe(item, idx)} unit price KES {price:,.0f} exceeds the sample tariff "
-                f"KES {info.tariff_kes:,.0f}"
+                f"{_describe(item, idx)} unit price KES {price:,.0f} exceeds the {source} KES {tariff:,.0f}"
             )
     if not over:
         return None
     return Finding(
         _capitalize("; ".join(over)),
         "SHA pays up to the tariff for each intervention; amounts above it will not be reimbursed. "
-        "(Tariffs here are sample values, see sha_tariffs_sample.csv.)",
+        "Tariffs come from the MOH OCL catalogue where set (see data/sha_interventions.csv).",
     )
 
 
@@ -490,7 +491,7 @@ REGISTRY: list[Rule] = [
     Rule("EMPTY_ITEMS", "2", "error", ("items",),
          AFYALINK, "AfyaLink: items need a SHA intervention code", check_items_present),
     Rule("SHA_SERVICE_CODE_FORMAT", "1", "error", ("items",),
-         IG_INTERVENTIONS, "DHA eClaims IG: SHA intervention codes", check_service_code_format),
+         OCL_INTERVENTIONS, "MOH OCL: SHA intervention catalogue", check_service_code_format),
     Rule("SERVICED_PERIOD_PRESENT", "1", "error", ("items",),
          AFYALINK, "AfyaLink: each item needs servicedPeriod start and end", check_serviced_period_present),
     Rule("SERVICED_PERIOD_IN_BILLABLE", "1", "error", ("items",),
@@ -505,14 +506,14 @@ REGISTRY: list[Rule] = [
     Rule("MISSING_PARTOGRAPH", "1", "error", ("partograph_id",), None, _SOP, check_partograph),
     Rule("MISSING_POSTOP_NOTES", "1", "error", ("postop_notes_attached",), None, _SOP, check_postop_notes),
     Rule("ITEM_QUANTITY_VALID", "1", "warning", ("items",), None, _LOCAL, check_quantity),
-    Rule("PREAUTH_REQUIRED", "1", "warning", ("preauth_ref",),
-         AFYALINK, "AfyaLink: some services need pre-authorization", check_preauth),
-    Rule("TARIFF_CEILING", "1", "warning", ("items",),
-         None, "Sample tariff fixture (not official)", check_tariff_ceiling),
+    Rule("PREAUTH_REQUIRED", "2", "warning", ("preauth_ref",),
+         OCL_INTERVENTIONS, "MOH OCL: pre-authorization flags per intervention", check_preauth),
+    Rule("TARIFF_CEILING", "2", "warning", ("items",),
+         OCL_INTERVENTIONS, "MOH OCL: intervention tariffs by facility level", check_tariff_ceiling),
     Rule("AMOUNT_HIGH", "1", "warning", ("claimed_amount",), None, _LOCAL, check_amount_reasonable),
     Rule("IMPLAUSIBLE_FREQUENCY", "1", "warning", ("sessions_this_week",), None, _SOP, check_renal_frequency),
 ]
 
 RULES_BY_ID = {rule.id: rule for rule in REGISTRY}
 # Bump when any rule changes; returned with every validation result.
-RULESET_VERSION = "2026.09-v2"
+RULESET_VERSION = "2026.09-v2.1"

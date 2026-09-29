@@ -113,7 +113,7 @@ class TestItemsPresent:
 
 
 class TestServiceCodeFormat:
-    @pytest.mark.parametrize("code", ["SHA-12-001", "SHA-16-001", "PMF-12-001"])
+    @pytest.mark.parametrize("code", ["SHA-12-001", "SHA-16-001", "PMF-12-001", "SHA-06-033-SI-006"])
     def test_valid(self, code):
         assert check("SHA_SERVICE_CODE_FORMAT", _base_claim(items=[_item(code=code)])).passed
 
@@ -202,6 +202,10 @@ class TestPreauth:
         result = check("PREAUTH_REQUIRED", _base_claim(items=[_item(code="SHA-16-001")]))
         assert not result.passed and result.severity == "warning"
 
+    def test_surgery_needs_preauth(self):
+        result = check("PREAUTH_REQUIRED", _base_claim(items=[_item(code="SHA-19-119")]))
+        assert not result.passed and "surgical" in result.message
+
     def test_dialysis_with_preauth_passes(self):
         claim = _base_claim(items=[_item(code="SHA-16-001")], preauth_ref="PA-123")
         assert check("PREAUTH_REQUIRED", claim).passed
@@ -217,6 +221,13 @@ class TestTariffCeiling:
 
     def test_codes_without_tariff_are_skipped(self):
         assert check("TARIFF_CEILING", _base_claim(items=[_item(price=999999)])).passed
+
+    def test_official_level_tariff_used_when_level_known(self):
+        # SHA-07-005 Post-partum complications: OCL level 4 tariff 3360 (per diem).
+        claim = _base_claim(facility_level="4", items=[_item(code="SHA-07-005", price=4000)])
+        result = check("TARIFF_CEILING", claim)
+        assert not result.passed and "OCL level 4 tariff KES 3,360" in result.message
+        assert check("TARIFF_CEILING", {**claim, "facility_level": "6"}).passed  # L6 tariff 4480
 
 
 class TestCoverageActive:
