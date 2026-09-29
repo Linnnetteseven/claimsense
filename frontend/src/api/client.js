@@ -6,8 +6,13 @@ async function request(path, options = {}) {
     ...options,
   });
   if (!res.ok) {
+    // Backend errors: {"error": {"code", "message", "details"}}
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail || `HTTP ${res.status}`);
+    const err = new Error(body.error?.message || body.detail || `HTTP ${res.status}`);
+    err.code = body.error?.code;
+    err.details = body.error?.details;
+    err.status = res.status;
+    throw err;
   }
   return res.json();
 }

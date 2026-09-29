@@ -78,8 +78,10 @@ class FakeRepository:
 @pytest.fixture
 def client(monkeypatch):
     repo = FakeRepository()
-    monkeypatch.setattr(main, "claims_repository", lambda: repo)
-    monkeypatch.setattr(main, "explain_errors", lambda errors, claim, targets=None: ({}, False))
+    import api.deps
+    import services.pipeline
+    monkeypatch.setattr(api.deps, "_repository", lambda: repo)
+    monkeypatch.setattr(services.pipeline, "explain_errors", lambda errors, claim, targets=None: ({}, False))
     monkeypatch.setattr(main.config, "DEMO_RESET_ENABLED", True)
     return TestClient(main.app), repo
 
@@ -212,9 +214,69 @@ def test_validation_runs_and_corrections_are_recorded(client):
     assert len(history["validation_runs"]) == 2 and len(history["corrections"]) == 1
 
 
-def test_health_reports_supabase(client):
+def test_health_reports_dependencies(client, monkeypatch):
+    from api.routers import health
     api, repo = client
-    assert api.get("/health").json() == {"ok": True, "checks": {"supabase": {"ok": True}}}
-    repo.down = True
+    monkeypatch.setitem(health.CHECKS, "sha_uat", (lambda: (True, "HTTP 200"), False))
+    monkeypatch.setitem(health.CHECKS, "upstash", (lambda: (None, "not configured"), False))
     body = api.get("/health").json()
-    assert body["ok"] is False and body["checks"]["supabase"]["error"] == "unreachable"
+    assert body["ok"] is True and body["checks"]["supabase"]["ok"] is True
+    assert body["checks"]["upstash"]["ok"] is None and body["ruleset_version"]
+
+
+def test_health_is_503_when_database_is_down(client, monkeypatch):
+    from api.routers import health
+    api, repo = client
+    monkeypatch.setitem(health.CHECKS, "sha_uat", (lambda: (True, "HTTP 200"), False))
+    repo.down = True
+    resp = api.get("/health")
+    assert resp.status_code == 503 and resp.json()["checks"]["supabase"]["detail"] == "unreachable"
+
+
+def test_optional_dependency_down_keeps_health_ok(client, monkeypatch):
+    from api.routers import health
+    api, _ = client
+
+    def boom():
+        raise RuntimeError("timeout")
+    monkeypatch.setitem(health.CHECKS, "sha_uat", (boom, False))
+    body = api.get("/health").json()
+    assert body["ok"] is True and body["checks"]["sha_uat"]["ok"] is False
+
+
+def test_errors_have_one_shape(client):
+    api, _ = client
+    missing = api.get("/claims/NOPE").json()
+    assert missing == {"error": {"code": "not_found", "message": "Claim 'NOPE' not found", "details": None}}
+    bad = api.post("/claims", json={"items": "not a list"})
+    assert bad.status_code == 422 and bad.json()["error"]["code"] == "invalid_request"
+    assert bad.json()["error"]["details"][0]["field"] == "items"
+
+
+def test_handoff_warnings_error_lists_rules(client):
+    api, _ = client
+    _fix_seed(api)
+    api.post("/claims/SEED-1/correct", json={"department": "renal", "sessions_this_week": 5})
+    body = api.post("/claims/SEED-1/handoff").json()
+    assert body["error"]["code"] == "warnings_not_acknowledged"
+    assert body["error"]["details"] == ["IMPLAUSIBLE_FREQUENCY"]
+
+
+def test_liveness_touches_no_dependency(client):
+    api, repo = client
+    repo.down = True
+    assert api.get("/").json()["status"] == "running"
+
+
+@pytest.mark.parametrize("origin,allowed", [
+    ("https://claimsense-frontend.vercel.app", True),
+    ("http://localhost:5173", True),
+    ("https://claimsense-frontend-e9orcpw0l-mugwanjalk-gmailcoms-projects.vercel.app", True),
+    ("https://claimsense-frontend-evil.vercel.app", False),
+    ("https://example.com", False),
+])
+def test_cors_only_allows_our_frontends(client, origin, allowed):
+    api, _ = client
+    resp = api.options("/claims", headers={"Origin": origin, "Access-Control-Request-Method": "POST"})
+    assert (resp.headers.get("access-control-allow-origin") == origin) is allowed
+    assert resp.headers.get("access-control-allow-credentials") is None

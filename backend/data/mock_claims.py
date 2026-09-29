@@ -29,6 +29,3 @@ def load_demo_claims() -> list[dict]:
     with _FIXTURE_PATH.open(encoding="utf-8") as fixture:
         return resolve_date_tokens(json.load(fixture))
 
-
-# Kept for legacy callers such as USSD. API routes now use Supabase.
-MOCK_CLAIMS: list[dict] = load_demo_claims()

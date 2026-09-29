@@ -130,6 +130,27 @@ class _Config:
     ICD_API_CLIENT_SECRET: str = os.getenv("ICD_API_CLIENT_SECRET", "")
     ICD_API_RELEASE: str = os.getenv("ICD_API_RELEASE", "2024-01")
 
+    # Browsers allowed to call the API. Exact origins, plus a pattern for Vercel preview
+    # builds of this team's frontend. No cookies are used, so credentials stay off.
+    CORS_ORIGINS: list[str] = [
+        o.strip().rstrip("/") for o in os.getenv(
+            "CORS_ORIGINS",
+            "https://claimsense-frontend.vercel.app,http://localhost:5173,http://127.0.0.1:5173",
+        ).split(",") if o.strip()
+    ]
+    CORS_ORIGIN_REGEX: str = os.getenv(
+        "CORS_ORIGIN_REGEX",
+        r"^https://claimsense-frontend-[a-z0-9-]+-mugwanjalk-gmailcoms-projects\.vercel\.app$",
+    )
+
+    # Where officers fix claims; shown in USSD screens and SMS.
+    FRONTEND_URL: str = os.getenv("FRONTEND_URL", "claimsense-frontend.vercel.app")
+
+    # USSD access: comma-separated E.164 numbers of registered officers. Empty = open (demo).
+    USSD_ALLOWED_PHONES: set[str] = {
+        p.strip() for p in os.getenv("USSD_ALLOWED_PHONES", "").split(",") if p.strip()
+    }
+
     # How validated claims reach the hospital HIS: store | webhook | openimis (see his/handoff.py).
     HIS_DELIVERY: str = os.getenv("HIS_DELIVERY", "store").strip().lower()
     HIS_WEBHOOK_URL: str = os.getenv("HIS_WEBHOOK_URL", "")

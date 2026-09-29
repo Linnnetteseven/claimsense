@@ -9,6 +9,8 @@ import logging
 import os
 import africastalking
 
+from config import config
+
 logger = logging.getLogger("hakiki.sms")
 
 
@@ -26,22 +28,25 @@ def _get_sms_service():
     return africastalking.SMS
 
 
-def _build_sms_body(claim: dict, result: dict) -> str:
+def mask_phone(phone_number: str) -> str:
+    """For logs: keep the country code and last 3 digits only."""
+    return phone_number[:4] + "*" * max(0, len(phone_number) - 7) + phone_number[-3:]
+
+
+def build_sms_body(claim: dict, result: dict) -> str:
+    """Claim ID, facility and results. Never the patient's name (SMS can be read by others)."""
     claim_id = claim.get("id", "N/A")
-    patient = claim.get("patient_name", "Unknown")
-    score = result["score"]
-    color = result["color"]
-    status = {"green": "READY", "amber": "REVIEW", "red": "ERRORS"}.get(color, "UNKNOWN")
+    status = {"green": "READY", "amber": "REVIEW", "red": "ERRORS"}.get(result["color"], "UNKNOWN")
 
     lines = [
         f"[Hakiki] {claim_id}",
-        f"Patient: {patient}",
-        f"Score: {score}/100 | {status}",
+        str(claim.get("facility_name") or claim.get("facility_code") or ""),
+        f"Score: {result['score']}/100 | {status}",
         "",
     ]
 
-    errors = [e for e in result.get("errors", []) if e.get("severity") == "error"]
-    warnings = [e for e in result.get("errors", []) if e.get("severity") == "warning"]
+    errors = result.get("errors", [])
+    warnings = result.get("warnings", [])
 
     if errors:
         lines.append("ERRORS (fix before submit):")
@@ -56,7 +61,7 @@ def _build_sms_body(claim: dict, result: dict) -> str:
             msg = warn.get("message", "")
             lines.append(f"- {msg[:50]}" if len(msg) > 50 else f"- {msg}")
 
-    lines += ["", "Review & submit:", "claimsense-frontend.vercel.app"]
+    lines += ["", "Fix and hand off:", config.FRONTEND_URL]
     return "\n".join(lines)
 
 
@@ -69,9 +74,9 @@ def send_claim_report_sms(phone_number: str, claim: dict, result: dict) -> None:
     if not sms:
         return
 
-    body = _build_sms_body(claim, result)
+    body = build_sms_body(claim, result)
     try:
-        response = sms.send(body, [phone_number])
-        logger.info("SMS sent to %s: %s", phone_number, response)
+        sms.send(body, [phone_number])
+        logger.info("SMS report for %s sent to %s", claim.get("id"), mask_phone(phone_number))
     except Exception as exc:
-        logger.error("SMS send failed for %s: %s", phone_number, exc)
+        logger.error("SMS send failed for %s: %s", mask_phone(phone_number), exc)

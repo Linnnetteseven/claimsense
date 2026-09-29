@@ -7,6 +7,7 @@ Validation and FHIR layers therefore remain independent of Supabase.
 from typing import Any
 
 from supabase import Client, create_client
+from supabase.lib.client_options import SyncClientOptions
 
 from config import config
 from data.mock_claims import resolve_date_tokens
@@ -24,9 +25,11 @@ class ClaimsRepository:
                 "Supabase is not configured. Set SUPABASE_URL and "
                 "SUPABASE_SERVICE_ROLE_KEY in backend/.env."
             )
+        # Short timeout: a stalled connection must not hold a request for minutes.
         self._client = create_client(
             config.SUPABASE_URL,
             config.SUPABASE_SERVICE_ROLE_KEY,
+            options=SyncClientOptions(postgrest_client_timeout=10),
         )
 
     _HANDOFFS = "claim_handoffs"
