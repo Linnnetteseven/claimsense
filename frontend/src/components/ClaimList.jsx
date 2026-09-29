@@ -125,11 +125,18 @@ export default function ClaimList({ claims, loading, selectedId, onSelect }) {
                         <span className="text-[10px] text-slate-400 dark:text-slate-500 font-medium">{claim.visit_date}</span>
                       </div>
                     </div>
-                    {preview.score !== undefined && (
-                      <span className={`flex-shrink-0 text-xs font-bold rounded-lg px-2 py-1 shadow-sm border ${badgeClass}`}>
-                        {preview.score}
-                      </span>
-                    )}
+                    <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                      {preview.score !== undefined && (
+                        <span className={`text-xs font-bold rounded-lg px-2 py-1 shadow-sm border ${badgeClass}`}>
+                          {preview.score}
+                        </span>
+                      )}
+                      {claim._status === "handed_off" && (
+                        <span className="text-[9px] font-bold uppercase tracking-wider text-teal-700 dark:text-teal-400">
+                          Handed off
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </button>
               </li>

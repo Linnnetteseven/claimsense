@@ -6,6 +6,7 @@ import { coerceFieldValue } from "../constants/status.js";
  * Validation workflow for one claim.
  *
  * state: "idle" | "loading" | "results" | "saving" | "submitting" | "submitted"
+ * ("submitted" means handed off to the hospital HIS, which submits to SHA.)
  *
  * Corrections are saved to the backend (and so to Supabase) and re-validated
  * in one call; the backend re-runs every rule, so fixing one field can clear
@@ -113,25 +114,25 @@ export function useClaimValidation(claim, onUpdate) {
     }
   }, [claimId, onUpdate, validation]);
 
-  const submit = useCallback(async () => {
-    if (!claimId || !validation || validation.error_count > 0 || Object.keys(edits).length > 0) {
-      return;
-    }
-    setState("submitting");
-    setError(null);
-    try {
-      const result = await api.submitClaim(claimId);
-      setSubmitResult({
-        ...result,
-        score: result.score ?? validation.score,
-        fhir_claim_response: result.fhir_claim_response ?? validation.fhir_claim_response,
-      });
-      setState("submitted");
-    } catch (err) {
-      setError(`Submission failed: ${err.message}`);
-      setState("results");
-    }
-  }, [claimId, validation, edits]);
+  const submit = useCallback(
+    async (acknowledgeWarnings = false) => {
+      if (!claimId || !validation || validation.error_count > 0 || Object.keys(edits).length > 0) {
+        return;
+      }
+      setState("submitting");
+      setError(null);
+      try {
+        const result = await api.handoffClaim(claimId, acknowledgeWarnings);
+        setSubmitResult(result);
+        setState("submitted");
+        onUpdate?.(claimId, { claim: { _status: "handed_off" } });
+      } catch (err) {
+        setError(`Hand-off failed: ${err.message}`);
+        setState("results");
+      }
+    },
+    [claimId, validation, edits, onUpdate]
+  );
 
   const hasEdits = Object.keys(edits).length > 0;
 

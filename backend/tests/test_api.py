@@ -16,6 +16,7 @@ class FakeRepository:
         self.rows = {
             "SEED-1": {"claim_data": resolve_date_tokens(seed), "seed_template": seed, "is_seed": True},
         }
+        self.handoffs = []
 
     def get_claim_by_number(self, number):
         row = self.rows.get(number)
@@ -31,11 +32,20 @@ class FakeRepository:
 
     def update_claim(self, number, claim):
         self.rows[number]["claim_data"] = claim
+        self.rows[number]["status"] = "draft"
         return copy.deepcopy(claim)
 
     def reset_claim(self, number):
         row = self.rows.get(number)
         return self.update_claim(number, resolve_date_tokens(row["seed_template"])) if row else None
+
+    def record_handoff(self, row):
+        self.handoffs.append({**row, "id": f"H-{len(self.handoffs) + 1}", "created_at": "now"})
+        self.rows[row["claim_number"]]["status"] = "handed_off"
+        return self.handoffs[-1]
+
+    def latest_handoff(self, number):
+        return next((h for h in reversed(self.handoffs) if h["claim_number"] == number), None)
 
     def reset_demo(self):
         removed = [k for k, r in self.rows.items() if not r["is_seed"]]
@@ -102,3 +112,72 @@ def test_bundle_endpoint_runs_checks(client):
     body = api.get("/claims/SEED-1/bundle").json()
     assert body["bundle"]["type"] == "message"
     assert body["checks_passed"] is True and body["issues"] == []
+
+
+def _fix_seed(api):
+    api.post("/claims/SEED-1/correct", json={"diagnosis_code": "CA40.Z"})
+
+
+def test_handoff_blocked_while_errors_remain(client):
+    api, repo = client
+    assert api.post("/claims/SEED-1/handoff").status_code == 400
+    assert repo.handoffs == []
+
+
+def test_handoff_stores_certified_bundle(client, monkeypatch):
+    api, repo = client
+    monkeypatch.setattr(main.config, "HIS_DELIVERY", "store")
+    _fix_seed(api)
+    body = api.post("/claims/SEED-1/handoff").json()
+    assert body["handed_off"] and body["delivery_status"] == "stored"
+    assert body["sha_bundle"]["type"] == "message"
+    assert repo.rows["SEED-1"]["status"] == "handed_off"
+    assert api.get("/claims/SEED-1/handoff").json()["bundle"] == body["sha_bundle"]
+
+
+def test_warnings_must_be_acknowledged(client):
+    api, repo = client
+    _fix_seed(api)
+    api.post("/claims/SEED-1/correct", json={"department": "renal", "sessions_this_week": 5})
+    assert api.post("/claims/SEED-1/handoff").status_code == 409
+    body = api.post("/claims/SEED-1/handoff", json={"acknowledge_warnings": True}).json()
+    assert body["warnings_acknowledged"] == ["IMPLAUSIBLE_FREQUENCY"]
+
+
+def test_editing_after_handoff_returns_to_draft(client):
+    api, repo = client
+    _fix_seed(api)
+    api.post("/claims/SEED-1/handoff")
+    api.post("/claims/SEED-1/correct", json={"diagnosis_description": "edited"})
+    assert repo.rows["SEED-1"]["status"] == "draft"
+
+
+def test_webhook_delivery(client, monkeypatch):
+    api, _ = client
+    sent = {}
+
+    class FakeAsyncClient:
+        def __init__(self, *a, **k):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, json=None, headers=None):
+            sent.update(url=url, bundle=json, headers=headers)
+            import httpx
+            return httpx.Response(202, text="accepted", request=httpx.Request("POST", url))
+
+    from his import handoff
+    monkeypatch.setattr(handoff.httpx, "AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr(main.config, "HIS_DELIVERY", "webhook")
+    monkeypatch.setattr(main.config, "HIS_WEBHOOK_URL", "https://his.example/claims")
+    monkeypatch.setattr(main.config, "HIS_WEBHOOK_TOKEN", "t0k")
+    _fix_seed(api)
+    body = api.post("/claims/SEED-1/handoff").json()
+    assert body["delivery_status"] == "delivered"
+    assert sent["url"] == "https://his.example/claims" and sent["headers"]["Authorization"] == "Bearer t0k"
+    assert sent["bundle"]["resourceType"] == "Bundle"

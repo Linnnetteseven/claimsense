@@ -31,7 +31,13 @@ export const api = {
     }),
   createClaim: (claimData) =>
     request("/claims", { method: "POST", body: JSON.stringify(claimData) }),
-  submitClaim: (id) => request(`/claims/${id}/submit`, { method: "POST" }),
+  // Hand the validated SHA bundle back to the hospital HIS (Hakiki never submits to SHA).
+  handoffClaim: (id, acknowledgeWarnings = false) =>
+    request(`/claims/${id}/handoff`, {
+      method: "POST",
+      body: JSON.stringify({ acknowledge_warnings: acknowledgeWarnings }),
+    }),
+  getHandoff: (id) => request(`/claims/${id}/handoff`),
   // Demo only: restore a claim, or every seeded claim, to its original state.
   resetClaim: (id) => request(`/claims/${id}/reset`, { method: "POST" }),
   resetDemo: () => request("/demo/reset", { method: "POST" }),

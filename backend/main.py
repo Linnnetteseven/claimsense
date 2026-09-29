@@ -7,7 +7,8 @@ Routes:
   GET  /claims/{id}                fetch one claim by ID
   POST /claims/{id}/validate       full pipeline: rules + Gemini + FHIR ClaimResponse + audit
   POST /claims/{id}/correct        apply edits + re-validate, save to session store
-  POST /claims/{id}/submit         POST ClaimResponse to openIMIS (mock or live)
+  POST /claims/{id}/handoff        hand the validated SHA bundle to the hospital HIS (/submit alias)
+  GET  /claims/{id}/handoff        latest hand-off and its certified bundle
   POST /validate                   validate any arbitrary claim dict (for re-validation)
   GET  /claims/{id}/audit          hash-chain audit history for one claim
   GET  /claims/{id}/bundle         Kenya eClaims submission Bundle + structural checks
@@ -33,9 +34,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from config import config
 from validation.engine import validate
 from fhir.builder import build_claim_response
-from fhir.client import openimis
 from fhir.bundle_checks import check_bundle
 from fhir.kenya_bundle_builder import build_kenya_eclaims_bundle
+from his import handoff as his_handoff
 from llm.explainer import explain_errors
 from repositories.claims import ClaimsRepository
 from audit import chain
@@ -330,61 +331,80 @@ async def reset_demo():
     return counts
 
 
-@app.post("/claims/{claim_id}/submit")
-async def submit_claim(claim_id: str):
+@app.post("/claims/{claim_id}/handoff")
+@app.post("/claims/{claim_id}/submit")  # older clients
+async def handoff_claim(claim_id: str, body: dict | None = None):
     """
-    Submit the ClaimResponse to openIMIS.
-    Blocked if there are any error-severity rule failures remaining.
+    Hand a validated claim back to the hospital HIS, which submits it to SHA.
+
+    Blocked while any error remains. Warnings must be acknowledged
+    ({"acknowledge_warnings": true}). The certified bundle is stored with its
+    score and ruleset version, then delivered per HIS_DELIVERY.
     """
-    claim = get_claim_or_404(claim_id, claims_repository())
+    repository = claims_repository()
+    claim = get_claim_or_404(claim_id, repository)
     result = validate(claim)
 
     if result["error_count"] > 0:
         raise HTTPException(
             status_code=400,
-            detail=(
-                f"Cannot submit — {result['error_count']} error(s) remain. "
-                "Fix all errors first."
-            ),
+            detail=f"Cannot hand off: {result['error_count']} error(s) remain. Fix all errors first.",
+        )
+    if result["warning_count"] > 0 and not (body or {}).get("acknowledge_warnings"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"{result['warning_count']} warning(s) need review. Confirm you have reviewed them to hand off.",
         )
 
-    # Structural bundle checks run before any submission.
     sha_bundle = _bundle_with_checks(claim)
     if not sha_bundle["checks_passed"]:
         raise HTTPException(
             status_code=400,
-            detail="Cannot submit: the SHA bundle failed checks: "
+            detail="Cannot hand off: the SHA bundle failed checks: "
             + "; ".join(i["message"] for i in sha_bundle["issues"]),
         )
 
-    fhir_cr = build_claim_response(claim, result)
-
-    if config.use_mock:
-        logger.info("MOCK submit — would POST ClaimResponse for %s", claim_id)
-        return {
-            "submitted": True,
-            "mode": "mock",
-            "claim_id": claim_id,
-            "score": result["score"],
-            "fhir_claim_response": fhir_cr,
-            "sha_bundle": sha_bundle["bundle"],
-            "note": "Set OPENIMIS_TOKEN in .env to submit to the live instance.",
-        }
-
+    delivery_status, delivery_response = await his_handoff.deliver(
+        claim, sha_bundle["bundle"], build_claim_response(claim, result)
+    )
     try:
-        openimis_resp = await openimis.post_claim_response(fhir_cr)
-        logger.info("openIMIS accepted ClaimResponse for %s", claim_id)
-        return {
-            "submitted": True,
-            "mode": "live",
-            "claim_id": claim_id,
+        record = repository.record_handoff({
+            "claim_number": claim_id,
+            "bundle": sha_bundle["bundle"],
             "score": result["score"],
-            "openimis_response": openimis_resp,
-            "fhir_claim_response": fhir_cr,
-        }
+            "ruleset_version": result["ruleset_version"],
+            "warnings": [w["rule_id"] for w in result["warnings"]],
+            "delivery": config.HIS_DELIVERY,
+            "delivery_status": delivery_status,
+            "delivery_response": delivery_response,
+        })
     except Exception as exc:
-        logger.error("openIMIS submission failed: %s", exc)
-        raise HTTPException(status_code=502, detail=f"openIMIS rejected the submission: {exc}")
+        logger.exception("Unable to record hand-off for %s", claim_id)
+        raise HTTPException(status_code=502, detail="Unable to record the hand-off") from exc
+
+    logger.info("Claim %s handed off to HIS (%s: %s)", claim_id, config.HIS_DELIVERY, delivery_status)
+    return {
+        "handed_off": delivery_status != "failed",
+        "claim_id": claim_id,
+        "handoff_id": record["id"],
+        "created_at": record["created_at"],
+        "score": result["score"],
+        "ruleset_version": result["ruleset_version"],
+        "warnings_acknowledged": [w["rule_id"] for w in result["warnings"]],
+        "delivery": config.HIS_DELIVERY,
+        "delivery_status": delivery_status,
+        "delivery_response": delivery_response,
+        "sha_bundle": sha_bundle["bundle"],
+    }
+
+
+@app.get("/claims/{claim_id}/handoff")
+async def get_handoff(claim_id: str):
+    """Latest hand-off for a claim, including the certified bundle. The HIS pulls from here."""
+    record = claims_repository().latest_handoff(claim_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"Claim '{claim_id}' has not been handed off")
+    return record
 
 
 # ---------------------------------------------------------------------------

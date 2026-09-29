@@ -49,6 +49,9 @@ function ClaimWorkspace({ claim, onValidationComplete }) {
   const saving = state === "saving";
 
   const [activeTab, setActiveTab] = useState("AI Validation");
+  const [warningsReviewed, setWarningsReviewed] = useState(false);
+  // A new validation result may carry different warnings; ask again.
+  useEffect(() => setWarningsReviewed(false), [validation]);
 
   // Document scan simulation state
   const [scanFile, setScanFile] = useState(null);
@@ -103,38 +106,76 @@ function ClaimWorkspace({ claim, onValidationComplete }) {
   }
 
   if (state === "submitted" && submitResult) {
+    const downloadBundle = () => {
+      const blob = new Blob([JSON.stringify(submitResult.sha_bundle, null, 2)], { type: "application/fhir+json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${claim.id}-sha-bundle.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+    };
+    const deliveryText = {
+      stored: "Stored in Hakiki for the hospital HIS to collect.",
+      delivered: "Delivered to the hospital HIS.",
+      failed: "Saved, but delivery to the hospital HIS failed. Download the bundle or retry.",
+    }[submitResult.delivery_status];
+
     return (
       <div className="flex-1 bg-slate-50 dark:bg-slate-900 p-8 overflow-y-auto">
         <div className="max-w-3xl mx-auto bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-850 rounded-2xl p-8 shadow-sm text-center">
           <div className="w-16 h-16 rounded-full bg-emerald-100 dark:bg-emerald-950/20 flex items-center justify-center mx-auto mb-5">
             <CheckIcon className="w-8 h-8 text-emerald-600 dark:text-emerald-400" />
           </div>
-          <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Claim Successfully Submitted</h2>
+          <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Handed off to the hospital HIS</h2>
           <p className="text-slate-500 dark:text-slate-400 text-sm mt-2 max-w-md mx-auto">
-            The FHIR R4 ClaimResponse has been validated and is ready for submission to the Social Health Authority.
+            Hakiki validated this claim against SHA rules and built the eClaims bundle. The hospital submits it to SHA
+            through its HIS or the SHA provider portal. {deliveryText}
           </p>
 
-          <div className="my-6 p-4 bg-slate-50 dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800 rounded-xl max-w-sm mx-auto flex items-center justify-between">
-            <span className="text-xs text-slate-500 dark:text-slate-400 font-semibold uppercase tracking-wider">Final Adjudication Score</span>
-            <span className="text-lg font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/30 px-3 py-1 rounded-lg border border-emerald-100 dark:border-emerald-900/40">
-              {submitResult.score}/100
-            </span>
-          </div>
+          <dl className="my-6 grid grid-cols-2 gap-3 max-w-md mx-auto text-left text-xs">
+            {[
+              ["Score", `${submitResult.score}/100`],
+              ["Ruleset", submitResult.ruleset_version],
+              ["Hand-off ID", submitResult.handoff_id],
+              ["Delivery", `${submitResult.delivery} (${submitResult.delivery_status})`],
+            ].map(([label, value]) => (
+              <div key={label} className="p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800 rounded-xl">
+                <dt className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">{label}</dt>
+                <dd className="mt-1 font-semibold text-slate-700 dark:text-slate-200 break-all">{value}</dd>
+              </div>
+            ))}
+          </dl>
+
+          {submitResult.warnings_acknowledged?.length > 0 && (
+            <p className="text-xs text-amber-700 dark:text-amber-400 mb-4">
+              Warnings reviewed by the officer: {submitResult.warnings_acknowledged.join(", ")}
+            </p>
+          )}
 
           <div className="w-full text-left bg-slate-900 dark:bg-slate-950 border border-slate-800 dark:border-slate-850 rounded-xl p-5 overflow-hidden shadow-inner mb-6">
-            <h3 className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-3">FHIR R4 ClaimResponse Payload</h3>
+            <h3 className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-3">SHA eClaims Bundle (FHIR R4)</h3>
             <pre className="text-xs text-emerald-400 dark:text-emerald-500 font-mono overflow-x-auto max-h-60">
-              {JSON.stringify(submitResult.fhir_claim_response || validation?.fhir_claim_response, null, 2)}
+              {JSON.stringify(submitResult.sha_bundle, null, 2)}
             </pre>
           </div>
 
-          <button
-            type="button"
-            onClick={reset}
-            className="bg-teal-600 hover:bg-teal-700 active:scale-95 text-white font-semibold text-sm px-6 py-2.5 rounded-xl transition-all shadow-sm"
-          >
-            Validate Next Claim
-          </button>
+          <div className="flex justify-center gap-3">
+            <button
+              type="button"
+              onClick={downloadBundle}
+              className="border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-900 font-semibold text-sm px-5 py-2.5 rounded-xl transition-all"
+            >
+              Download bundle
+            </button>
+            <button
+              type="button"
+              onClick={reset}
+              className="bg-teal-600 hover:bg-teal-700 active:scale-95 text-white font-semibold text-sm px-6 py-2.5 rounded-xl transition-all shadow-sm"
+            >
+              Validate Next Claim
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -403,17 +444,29 @@ function ClaimWorkspace({ claim, onValidationComplete }) {
                       </>
                     )}
 
+                    {canSubmit && validation.warning_count > 0 && (
+                      <label className="flex items-center gap-2 text-xs font-semibold text-amber-700 dark:text-amber-400">
+                        <input
+                          type="checkbox"
+                          checked={warningsReviewed}
+                          onChange={(e) => setWarningsReviewed(e.target.checked)}
+                          className="rounded border-amber-300 text-teal-600 focus:ring-teal-500"
+                        />
+                        I have reviewed the {validation.warning_count} warning{validation.warning_count !== 1 ? "s" : ""}
+                      </label>
+                    )}
+
                     <button
                       type="button"
-                      onClick={submit}
-                      disabled={!canSubmit || state === "submitting"}
+                      onClick={() => submit(warningsReviewed)}
+                      disabled={!canSubmit || state === "submitting" || (validation.warning_count > 0 && !warningsReviewed)}
                       className={`flex-1 text-white font-semibold text-sm py-3 rounded-xl transition-all shadow-md active:scale-95 ${
                         canSubmit
                           ? "bg-teal-600 hover:bg-teal-700 cursor-pointer"
                           : "bg-slate-300 dark:bg-slate-800 cursor-not-allowed opacity-70"
                       }`}
                     >
-                      {state === "submitting" ? "Submitting..." : "Submit to Social Health Authority →"}
+                      {state === "submitting" ? "Handing off..." : "Send to hospital HIS →"}
                     </button>
 
                     <button
@@ -591,7 +644,7 @@ function ClaimWorkspace({ claim, onValidationComplete }) {
               activeStep >= 3 ? "bg-emerald-500 border-emerald-500 scale-110 shadow-sm shadow-emerald-500/50" : "bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700"
             }`} />
             <div className="pl-3.5">
-              <p className={`text-xs font-bold ${activeStep >= 3 ? "text-slate-800 dark:text-slate-200" : "text-slate-400 dark:text-slate-550"}`}>Ready for Social Health Authority</p>
+              <p className={`text-xs font-bold ${activeStep >= 3 ? "text-slate-800 dark:text-slate-200" : "text-slate-400 dark:text-slate-550"}`}>Ready for hospital HIS</p>
               <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">Clear uploaded document</p>
             </div>
           </div>

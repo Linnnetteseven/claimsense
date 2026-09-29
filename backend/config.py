@@ -123,6 +123,11 @@ class _Config:
     ICD_API_CLIENT_SECRET: str = os.getenv("ICD_API_CLIENT_SECRET", "")
     ICD_API_RELEASE: str = os.getenv("ICD_API_RELEASE", "2024-01")
 
+    # How validated claims reach the hospital HIS: store | webhook | openimis (see his/handoff.py).
+    HIS_DELIVERY: str = os.getenv("HIS_DELIVERY", "store").strip().lower()
+    HIS_WEBHOOK_URL: str = os.getenv("HIS_WEBHOOK_URL", "")
+    HIS_WEBHOOK_TOKEN: str = os.getenv("HIS_WEBHOOK_TOKEN", "")
+
     # Allows POST /claims/{id}/reset and POST /demo/reset. Turn off outside demos.
     DEMO_RESET_ENABLED: bool = _env_bool(
         "DEMO_RESET_ENABLED",
