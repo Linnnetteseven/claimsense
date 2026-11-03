@@ -125,17 +125,17 @@ export function useClaimValidation(claim, onValidationComplete) {
     setState("loading");
     setError(null);
     try {
-	const result = await api.validateRaw(corrected);
+      const saved = await api.correctClaim(claim.id, corrected);
+      const result = saved.validation;
 	setValidation(result);
 	setEdits({});
 	setState("results");
-	onValidationComplete?.(claim.id, result);
+	onValidationComplete?.(claim.id, result, saved.claim);
     } catch {
       // Backend offline simulation fallback
       setTimeout(() => {
         const result = simulateValidation(claim, edits);
         setValidation(result);
-        setEdits({});
         setState("results");
         onValidationComplete?.(claim.id, result);
       }, 500);
@@ -170,7 +170,7 @@ export function useClaimValidation(claim, onValidationComplete) {
     error,
     submitResult,
     hasEdits: Object.keys(edits).length > 0,
-    canSubmit: (validation?.error_count ?? 1) === 0,
+    canSubmit: (validation?.error_count ?? 1) === 0 && Object.keys(edits).length === 0,
     validate,
     editField,
     revalidateWithEdits,

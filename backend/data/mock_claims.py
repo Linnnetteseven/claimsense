@@ -1,5 +1,5 @@
-# Five realistic SHA Kenya claims covering different error scenarios.
-# These are used when OPENIMIS_TOKEN is not set in .env.
+# Seven realistic demo claims covering different claim departments and error scenarios.
+# These are used when OPENIMIS_TOKEN is not set in .env; demo facility is Kerugoya Level 5 Hospital.
 #
 # CLM-001: clean claim — passes all rules  (demo "good" state)
 # CLM-002: broken claim — fails 4 rules    (demo "bad" state → fix live on stage)
@@ -23,14 +23,14 @@ MOCK_CLAIMS: list[dict] = [
         "patient_name": "Grace Wanjiru Njoroge",
         "dob": "1989-03-14",
         "gender": "F",
-        "facility_code": "KNH-001",
-        "facility_name": "Kenyatta National Hospital",
+        "facility_code": "KRG-005",
+        "facility_name": "Kerugoya Level 5 Hospital",
         "visit_date": _three_days_ago,
         "diagnosis_code": "J18.9",
         "diagnosis_description": "Pneumonia, unspecified organism",
         "coverage_start_date": "2025-01-01",
         "coverage_end_date": "2027-01-01",
-        "facility_name": "Kenyatta National Hospital",
+        "facility_name": "Kerugoya Level 5 Hospital",
         "department": "outpatient",
         "items": [
             {
@@ -68,8 +68,8 @@ MOCK_CLAIMS: list[dict] = [
         "patient_name": "Joseph Mwangi Kamau",
         "dob": "1975-08-22",
         "gender": "M",
-        "facility_code": "MKT-003",
-        "facility_name": "Mbagathi County Hospital",
+        "facility_code": "KRG-005",
+        "facility_name": "Kerugoya Level 5 Hospital",
         # Error: visit is in the future
         "visit_date": _future,
         # Error: invalid ICD-10 format
@@ -82,7 +82,7 @@ MOCK_CLAIMS: list[dict] = [
         "items": [],
         "claimed_amount": 0,
         "scheme_code": "SHA-2025",
-        "facility_name": "Mbagathi County Hospital",
+        "facility_name": "Kerugoya Level 5 Hospital",
         "department": "outpatient",
     },
     {
@@ -91,14 +91,14 @@ MOCK_CLAIMS: list[dict] = [
         "patient_name": "Amina Hassan Osman",
         "dob": "1995-11-30",
         "gender": "F",
-        "facility_code": "PGH-002",
-        "facility_name": "Pumwani Maternity Hospital",
+        "facility_code": "KRG-005",
+        "facility_name": "Kerugoya Level 5 Hospital",
         "visit_date": _yesterday,
         "diagnosis_code": "O80",
         "diagnosis_description": "Single spontaneous delivery",
         "coverage_start_date": "2025-06-01",
         "coverage_end_date": "2027-06-01",
-        "facility_name": "Pumwani Maternity Hospital",
+        "facility_name": "Kerugoya Level 5 Hospital",
         "department": "maternity",
         "items": [
             {
@@ -122,7 +122,7 @@ MOCK_CLAIMS: list[dict] = [
         ],
         "claimed_amount": 16400,
         "scheme_code": "SHA-2025",
-        "facility_name": "Pumwani Maternity Hospital",
+        "facility_name": "Kerugoya Level 5 Hospital",
         "department": "maternity", 
         "diagnosis_description": "Single spontaneous delivery",
         "partograph_id": "PG-2026-014",
@@ -133,14 +133,14 @@ MOCK_CLAIMS: list[dict] = [
         "patient_name": "Peter Otieno Odhiambo",
         "dob": "1962-04-05",
         "gender": "M",
-        "facility_code": "AGH-001",
-        "facility_name": "Aga Khan Hospital Nairobi",
+        "facility_code": "KRG-005",
+        "facility_name": "Kerugoya Level 5 Hospital",
         "visit_date": _seven_days_ago,
         "diagnosis_code": "E11.9",
         "diagnosis_description": "Type 2 diabetes mellitus without complications",
         "coverage_start_date": "2024-07-01",
         "coverage_end_date": "2027-07-01",
-        "facility_name": "Aga Khan Hospital Nairobi",
+        "facility_name": "Kerugoya Level 5 Hospital",
         "department": "outpatient",
         "items": [
             {
@@ -165,6 +165,7 @@ MOCK_CLAIMS: list[dict] = [
         # Warning: claimed_amount is 9000 but items total 7500 — 20% mismatch
         "claimed_amount": 9000,
         "scheme_code": "SHA-2025",
+        "department": "outpatient",
     },
     {
         "id": "SHA-CLM-2026-005",
@@ -172,14 +173,14 @@ MOCK_CLAIMS: list[dict] = [
         "patient_name": "Unknown Patient",
         "dob": "",
         "gender": "F",
-        "facility_code": "NRB-CHC-012",
-        "facility_name": "Nairobi Community Health Centre",
+        "facility_code": "KRG-005",
+        "facility_name": "Kerugoya Level 5 Hospital",
         "visit_date": _yesterday,
         "diagnosis_code": "K59.0",
         "diagnosis_description": "Constipation",
         "coverage_start_date": "",
         "coverage_end_date": "2027-01-01",
-        "facility_name": "Nairobi Community Health Centre",
+        "facility_name": "Kerugoya Level 5 Hospital",
         "department": "outpatient",
         "items": [
             {
@@ -192,6 +193,7 @@ MOCK_CLAIMS: list[dict] = [
         ],
         "claimed_amount": 500,
         "scheme_code": "SHA-2025",
+        "department": "outpatient",
     },
     {
         "id": "SHA-CLM-2026-006",
@@ -225,8 +227,8 @@ MOCK_CLAIMS: list[dict] = [
         "patient_name": "Faith Wambui Kariuki",
         "dob": "1980-09-19",
         "gender": "F",
-        "facility_code": "AGH-001",
-        "facility_name": "Aga Khan Hospital Nairobi",
+        "facility_code": "KRG-005",
+        "facility_name": "Kerugoya Level 5 Hospital",
         "department": "surgical",
         "visit_date": _three_days_ago,
         "diagnosis_code": "K35.8",

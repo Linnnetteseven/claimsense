@@ -4,6 +4,7 @@ import { api } from "../api/client.js";
 export function useClaimAudit() {
   const [state, setState] = useState("idle");
   const [history, setHistory] = useState([]);
+  const [currentVersion, setCurrentVersion] = useState(null);
   const [error, setError] = useState(null);
 
   const load = useCallback(async (claimId) => {
@@ -12,6 +13,7 @@ export function useClaimAudit() {
     try {
       const result = await api.getClaimAudit(claimId);
       setHistory(result.history || []);
+      setCurrentVersion(result.current_version || null);
       setState("loaded");
     } catch (err) {
       setError(err.message);
@@ -19,5 +21,5 @@ export function useClaimAudit() {
     }
   }, []);
 
-  return { state, history, error, load };
+  return { state, history, currentVersion, error, load };
 }

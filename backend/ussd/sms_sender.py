@@ -8,6 +8,7 @@ In sandbox mode (AT_USERNAME=sandbox), SMS lands in the AT simulator inbox.
 import logging
 import os
 import africastalking
+from config import config
 
 logger = logging.getLogger("hakiki.sms")
 
@@ -65,13 +66,18 @@ def send_claim_report_sms(phone_number: str, claim: dict, result: dict) -> None:
     Send claim validation report SMS.
     Called as a FastAPI BackgroundTask — failures are logged, not raised.
     """
+    if not config.ENABLE_SMS:
+        logger.info("SMS sending disabled by ENABLE_SMS")
+        return
+
     sms = _get_sms_service()
     if not sms:
         return
 
     body = _build_sms_body(claim, result)
+    masked_phone = f"***{phone_number[-3:]}" if len(phone_number) >= 3 else "***"
     try:
         response = sms.send(body, [phone_number])
-        logger.info("SMS sent to %s: %s", phone_number, response)
+        logger.info("SMS sent to %s: %s", masked_phone, response)
     except Exception as exc:
-        logger.error("SMS send failed for %s: %s", phone_number, exc)
+        logger.error("SMS send failed for %s: %s", masked_phone, exc)

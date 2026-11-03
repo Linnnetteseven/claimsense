@@ -5,7 +5,8 @@ const DEFAULT_MOCK_CLAIM = {
   id: "SHA-CLM-90210",
   patient_name: "Jane Doe",
   patient_id: "PT-88301-SHA",
-  facility_name: "Equity Afia Clinic",
+  facility_name: "Kerugoya Level 5 Hospital",
+  department: "outpatient",
   visit_date: "2026-07-02",
   coverage_end_date: "2026-12-31",
   diagnosis_code: "INVALID_CODE",
@@ -40,7 +41,7 @@ export function useClaims() {
       const hasMock = loadedClaims.some((c) => c.id === DEFAULT_MOCK_CLAIM.id);
       setClaims(hasMock ? loadedClaims : [DEFAULT_MOCK_CLAIM, ...loadedClaims]);
       return data.claims ?? [];
-    } catch (err) {
+    } catch {
       // In case of error (e.g. backend offline), fall back to our mock claim list
       setClaims([DEFAULT_MOCK_CLAIM]);
       return [DEFAULT_MOCK_CLAIM];

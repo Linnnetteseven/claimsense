@@ -11,6 +11,7 @@ function emptyForm() {
     gender: "F",
     facility_name: "",
     facility_code: "",
+    department: "outpatient",
     visit_date: new Date().toISOString().slice(0, 10),
     diagnosis_code: "",
     diagnosis_description: "",
@@ -70,6 +71,8 @@ export default function AddClaimModal({ onClose, onSubmit }) {
     try {
       await onSubmit({
         ...form,
+        facility_name: "Kerugoya Level 5 Hospital",
+        facility_code: "KRG-005",
         items: form.items.filter((item) => item.service_code || item.description),
         claimed_amount: claimedAmount,
       });
@@ -163,23 +166,16 @@ export default function AddClaimModal({ onClose, onSubmit }) {
               Visit
             </legend>
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Facility name" required>
-                <input
-                  required
-                  value={form.facility_name}
-                  onChange={(e) => updateField("facility_name", e.target.value)}
-                  className="input"
-                  placeholder="Kenyatta National Hospital"
-                />
+              <Field label="Facility">
+                <div className="input text-slate-500">Kerugoya Level 5 Hospital · KRG-005</div>
               </Field>
-              <Field label="Facility code" required>
-                <input
-                  required
-                  value={form.facility_code}
-                  onChange={(e) => updateField("facility_code", e.target.value)}
-                  className="input"
-                  placeholder="KNH-001"
-                />
+              <Field label="Owning department" required>
+                <select required value={form.department} onChange={(e) => updateField("department", e.target.value)} className="input">
+                  <option value="outpatient">Outpatient</option>
+                  <option value="maternity">Maternity</option>
+                  <option value="renal">Renal Unit</option>
+                  <option value="surgical">Surgical</option>
+                </select>
               </Field>
               <Field label="Visit date" required>
                 <input
@@ -258,7 +254,6 @@ export default function AddClaimModal({ onClose, onSubmit }) {
             </div>
             <div className="space-y-2">
               {form.items.map((item, index) => (
-                // eslint-disable-next-line react/no-array-index-key -- rows have no stable id until saved
                 <div key={index} className="grid grid-cols-12 gap-2 items-center">
                   <input
                     value={item.service_code}

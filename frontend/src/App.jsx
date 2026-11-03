@@ -3,6 +3,7 @@ import ClaimList from "./components/ClaimList.jsx";
 import ValidationPanel from "./components/ValidationPanel.jsx";
 import LandingPage from "./components/LandingPage.jsx";
 import AddClaimModal from "./components/AddClaimModal.jsx";
+import PrivacyToggle from "./components/PrivacyToggle.jsx";
 import { useClaims } from "./hooks/useClaims.js";
 
 export default function App() {
@@ -13,6 +14,14 @@ export default function App() {
   const [view, setView] = useState("landing");
   const [selectedId, setSelectedId] = useState(null);
   const [addModalOpen, setAddModalOpen] = useState(false);
+  const [privacyMode, setPrivacyMode] = useState(() => localStorage.getItem("presentationPrivacy") === "on");
+
+  function handleValidationComplete(claimId, validationResult, updatedClaim) {
+    patchPreview(claimId, validationResult);
+    if (updatedClaim) {
+      setSelectedClaim((current) => current?.id === claimId ? { ...current, ...updatedClaim } : current);
+    }
+  }
 
   const [darkMode, setDarkMode] = useState(() => {
     if (typeof window !== "undefined") {
@@ -33,15 +42,18 @@ export default function App() {
     }
   }, [darkMode]);
 
+  useEffect(() => {
+    localStorage.setItem("presentationPrivacy", privacyMode ? "on" : "off");
+  }, [privacyMode]);
+
   if (!selectedId && claims.length > 0) {
     setSelectedId(claims[0].id);
   }
 
-  const readyCount = claims.filter((c) => c._preview?.color === "green").length;
-
   async function handleAddClaim(claimData) {
     const created = await addClaim(claimData);
     setSelectedId(created.id);
+    setSelectedClaim(created);
     setAddModalOpen(false);
     setView("dashboard");
   }
@@ -61,60 +73,60 @@ export default function App() {
   return (
     <div className="flex h-screen bg-slate-50 dark:bg-slate-900 overflow-hidden font-sans text-slate-800 dark:text-slate-100 antialiased">
       {/* Left sidebar: Persistent Queue */}
-      <aside className="w-80 flex-shrink-0 bg-white dark:bg-slate-950 border-r border-slate-200 dark:border-slate-800 flex flex-col">
+      <aside className="w-72 2xl:w-80 flex-shrink-0 bg-white dark:bg-slate-950 border-r border-slate-200 dark:border-slate-800 flex flex-col">
         {/* Branding Header - Updated to Hakiki Reference Style */}
-        <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800/60 flex items-center justify-between min-h-[72px]">
-          <button
-            type="button"
-            onClick={() => setView("landing")}
-            className="flex items-center hover:opacity-80 transition-opacity text-left shrink-0"
-          >
-            <div className="flex items-center gap-2.5">
-              <img src="/favicon.png" alt="Hakiki Logo" className="h-8 w-8 object-contain" />
-              <div className="flex flex-col text-left">
-                {/* The new styled Hakiki logo text */}
-                <span className="text-3xl font-black tracking-tighter text-[#0A4D3C] dark:text-teal-400 leading-none mt-1">
-                  Hakiki
-                </span>
+        <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800/60 space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <button
+              type="button"
+              onClick={() => setView("landing")}
+              className="flex items-center hover:opacity-80 transition-opacity text-left min-w-0"
+              aria-label="Return to Hakiki home"
+            >
+              <div className="flex items-center gap-2.5">
+                <img src="/favicon.png" alt="" className="h-8 w-8 object-contain" />
+                <span className="text-3xl font-black tracking-tighter text-[#0A4D3C] dark:text-teal-400 leading-none mt-1">Hakiki</span>
               </div>
+            </button>
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                type="button"
+                onClick={() => setDarkMode(!darkMode)}
+                aria-label="Toggle Theme"
+                className="p-2 text-slate-500 hover:text-teal-600 dark:text-slate-400 dark:hover:text-teal-400 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              >
+                {darkMode ? (
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707m12.728 0l-.707-.707M6.343 6.364l-.707-.707M12 8a4 4 0 100 8 4 4 0 000-8z" />
+                  </svg>
+                ) : (
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+                  </svg>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => setAddModalOpen(true)}
+                className="text-xs bg-[#00897B] hover:bg-teal-700 active:scale-95 transition-all text-white font-semibold rounded-lg px-3 py-2 shadow-sm whitespace-nowrap"
+                aria-label="Add claim"
+              >
+                + Add
+              </button>
             </div>
-          </button>
-          <div className="flex items-center gap-2 ml-4">
-            <button
-              type="button"
-              onClick={() => setDarkMode(!darkMode)}
-              aria-label="Toggle Theme"
-              className="p-2 text-slate-500 hover:text-teal-600 dark:text-slate-400 dark:hover:text-teal-400 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-            >
-              {darkMode ? (
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707m12.728 0l-.707-.707M6.343 6.364l-.707-.707M12 8a4 4 0 100 8 4 4 0 000-8z" />
-                </svg>
-              ) : (
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
-                </svg>
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={() => setAddModalOpen(true)}
-              className="text-xs bg-[#00897B] hover:bg-teal-700 active:scale-95 transition-all text-white font-semibold rounded-lg px-2.5 py-2 shadow-sm whitespace-nowrap"
-            >
-              + Add
-            </button>
           </div>
+          <PrivacyToggle enabled={privacyMode} onToggle={() => setPrivacyMode((enabled) => !enabled)} />
         </div>
 
         {/* Search & Stats Header */}
-        <div className="px-5 py-3 bg-slate-50/50 dark:bg-slate-900/50 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+        <div className="px-4 py-3 bg-slate-50/50 dark:bg-slate-900/50 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between gap-3">
           <div>
             <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
               Claims Queue
             </p>
             {!loading && (
               <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-                {counts.total || claims.length} total • {counts.ready || readyCount} ready
+                {counts.total || claims.length} total • {counts.ready} ready
               </p>
             )}
           </div>
@@ -136,6 +148,10 @@ export default function App() {
         {/* Scrollable list of claims */}
         <div className="flex-1 overflow-y-auto">
           <ClaimList
+            claims={claims}
+            loading={loading}
+            onRefresh={reload}
+            privacyMode={privacyMode}
             selectedId={selectedId}
             onSelect={(id, claim) => {
               setSelectedId(id);
@@ -155,9 +171,11 @@ export default function App() {
 
       {/* Right workspace: Dynamic Workspace */}
       <main className="flex-1 flex flex-col overflow-hidden bg-slate-100/60 dark:bg-slate-900/40">
-        <ValidationPanel 
+        <ValidationPanel
+          key={selectedClaim?.id ?? "no-claim"}
           claim={selectedClaim} 
-          onValidationComplete={patchPreview} 
+          privacyMode={privacyMode}
+          onValidationComplete={handleValidationComplete}
         />
       </main>
 
