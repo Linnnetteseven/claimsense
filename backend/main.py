@@ -5,7 +5,7 @@ Routes:
   GET  /                           health + mode check
   GET  /claims                     list all claims with pre-scored summaries
   GET  /claims/{id}                fetch one claim by ID
-  POST /claims/{id}/validate       full pipeline: rules + Claude + FHIR ClaimResponse
+  POST /claims/{id}/validate       full pipeline: rules + Gemini + FHIR ClaimResponse + audit event
   POST /claims/{id}/correct        apply edits + re-validate, save to session store
   POST /claims/{id}/submit         POST ClaimResponse to openIMIS (mock or live)
   POST /validate                   validate any arbitrary claim dict (for re-validation)
@@ -15,7 +15,7 @@ load_dotenv()
 
 
 import logging
-from fastapi import Form, BackgroundTasks
+from fastapi import Form, BackgroundTasks, Header
 from fastapi.responses import PlainTextResponse
 from ussd.handler import handle_ussd_session
 from contextlib import asynccontextmanager
@@ -29,7 +29,10 @@ from validation.engine import validate
 from fhir.builder import build_claim_response
 from fhir.client import openimis
 from llm.explainer import explain_errors
-from audit import chain
+from audit import chain, anchor
+from db.factory import get_repository, is_oracle_active, configured_backend
+import hmac
+import re
 
 logging.basicConfig(
     level=logging.DEBUG if config.DEBUG else logging.INFO,
@@ -37,6 +40,11 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger("claimsense.main")
+
+
+def _storage_unavailable(exc: Exception, detail: str) -> HTTPException:
+    logger.warning("Storage operation failed (%s)", type(exc).__name__)
+    return HTTPException(status_code=503, detail=detail)
 
 
 @asynccontextmanager
@@ -59,32 +67,67 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=list(dict.fromkeys(config.ALLOWED_ORIGINS + ([config.DEPLOYED_FRONTEND_URL] if config.DEPLOYED_FRONTEND_URL else []))),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+
+@app.get("/health/db")
+async def database_health():
+    """Report selected storage mode and connectivity without exposing configuration."""
+    repository = get_repository()
+    try:
+        connected = bool(repository.health())
+    except Exception as exc:
+        logger.warning("Database health check failed (%s)", type(exc).__name__)
+        connected = False
+    active = getattr(repository, "active_backend", repository.backend_name)
+    if active == "redis":
+        from audit.chain import _audit_enabled
+        durable = _audit_enabled()
+    else:
+        durable = active == "oracle"
+    return {
+        "configured_backend": configured_backend(),
+        "active_backend": active,
+        "connected": connected,
+        "durable": durable,
+    }
+
 # Session-scoped store for user corrections.
 # Persists for the life of the server process (sufficient for a demo).
 _session_corrections: dict[str, dict] = {}
+_session_claims: list[dict] = []
 
 
 def get_claim_or_404(claim_id: str) -> dict:
-    """Look up a claim: corrected version first, then original mock data."""
+    """Look up a corrected, newly created, or seeded claim."""
+    repository = get_repository()
+    if is_oracle_active(repository):
+        try:
+            stored = repository.get_claim(claim_id)
+        except Exception as exc:
+            logger.warning("Oracle claim lookup failed (%s)", type(exc).__name__)
+            raise HTTPException(status_code=503, detail="Selected database is unavailable") from None
+        if is_oracle_active(repository):
+            if stored:
+                return stored
+            raise HTTPException(status_code=404, detail=f"Claim '{claim_id}' not found")
     if claim_id in _session_corrections:
         return _session_corrections[claim_id]
-    match = next((c for c in MOCK_CLAIMS if c["id"] == claim_id), None)
+    match = next((c for c in [*_session_claims, *MOCK_CLAIMS] if c["id"] == claim_id), None)
     if not match:
         raise HTTPException(status_code=404, detail=f"Claim '{claim_id}' not found")
     return match
 
 
-def full_pipeline(claim: dict) -> dict:
+def full_pipeline(claim: dict, record_audit: bool = True) -> dict:
     """
     The core validation pipeline used by multiple routes:
-      1. Run all 7 validation rules
-      2. Ask Claude to explain errors in plain English
+      1. Run the deterministic validation rules
+      2. Ask Gemini to explain errors in plain English
       3. Build the FHIR R4 ClaimResponse resource
       4. Record the result in the tamper-evident audit trail
     Returns everything the frontend needs in one response.
@@ -94,7 +137,12 @@ def full_pipeline(claim: dict) -> dict:
     result["explanations"] = explanations
     result["ai_explanations_used"] = ai_used
     result["fhir_claim_response"] = build_claim_response(claim, result)
-    chain.record_validation(claim.get("id"), result)
+    if record_audit and claim.get("id"):
+        try:
+            chain.record_claim_received(claim)
+            chain.record_validation(claim.get("id"), result, claim)
+        except Exception as exc:
+            raise _storage_unavailable(exc, "Audit storage is unavailable; validation was not recorded") from None
     return result
 
 
@@ -103,37 +151,37 @@ def full_pipeline(claim: dict) -> dict:
 # ---------------------------------------------------------------------------
 @app.get("/claims/{claim_id}/audit")
 async def get_claim_audit(claim_id: str):
-    """Full hash-chain history for one claim's validation runs."""
-    return {"claim_id": claim_id, "history": chain.get_chain_for_claim(claim_id)}
+    """Claim lifecycle events and comparison against the current saved version."""
+    claim = get_claim_or_404(claim_id)
+    try:
+        chain.record_claim_received(claim)
+        return {
+            "claim_id": claim_id,
+            "history": chain.get_chain_for_claim(claim_id),
+            "current_version": chain.verify_current_claim_version(claim_id, claim),
+        }
+    except Exception as exc:
+        raise _storage_unavailable(exc, "Audit history is unavailable") from None
 
 
 @app.get("/audit/verify")
 async def verify_audit_chain():
     """Recomputes every hash in the ledger and confirms nothing was altered."""
-    return chain.verify_chain()
+    try:
+        return chain.verify_chain()
+    except Exception as exc:
+        raise _storage_unavailable(exc, "Audit ledger is unavailable") from None
+
+@app.post("/ledger/anchor")
+async def anchor_audit_ledger(x_anchor_secret: str = Header(default="", alias="X-Anchor-Secret")):
+    if not config.ANCHOR_API_SECRET or not hmac.compare_digest(x_anchor_secret, config.ANCHOR_API_SECRET):
+        raise HTTPException(status_code=403, detail="Manual ledger anchoring is not authorized")
+    return anchor.anchor_latest()
 
 
-@app.get("/claims/{claim_id}/audit")
-async def get_claim_audit(claim_id: str):
-    """Full hash-chain history for one claim's validation runs."""
-    return {"claim_id": claim_id, "history": chain.get_chain_for_claim(claim_id)}
-
-
-@app.get("/audit/verify")
-async def verify_audit_chain():
-    """Recomputes every hash in the ledger and confirms nothing was altered."""
-    return chain.verify_chain()
-
-
-@app.get("/claims/{claim_id}/audit")
-async def get_claim_audit(claim_id: str):
-    """Full hash-chain history for one claim's validation runs."""
-    return {"claim_id": claim_id, "history": chain.get_chain_for_claim(claim_id)}
-
-@app.get("/audit/verify")
-async def verify_audit_chain():
-    """Recomputes every hash in the ledger and confirms nothing was altered."""
-    return chain.verify_chain()
+@app.get("/ledger/verify-anchor")
+async def verify_ledger_anchor():
+    return anchor.verify_anchors()
 
 
 @app.get("/")
@@ -145,30 +193,6 @@ async def health_check():
         "llm": "enabled" if config.llm_enabled else "disabled",
         "openimis_url": config.OPENIMIS_URL,
     }
-
-@app.get("/claims/{claim_id}/audit")
-async def get_claim_audit(claim_id: str):
-    """Full hash-chain history for one claim's validation runs."""
-    return {"claim_id": claim_id, "history": chain.get_chain_for_claim(claim_id)}
-
-
-@app.get("/audit/verify")
-async def verify_audit_chain():
-    """Recomputes every hash in the ledger and confirms nothing was altered."""
-    return chain.verify_chain()
-
-
-@app.get("/claims/{claim_id}/audit")
-async def get_claim_audit(claim_id: str):
-    """Full hash-chain history for one claim's validation runs."""
-    return {"claim_id": claim_id, "history": chain.get_chain_for_claim(claim_id)}
-
-
-@app.get("/audit/verify")
-async def verify_audit_chain():
-    """Recomputes every hash in the ledger and confirms nothing was altered."""
-    return chain.verify_chain()
-
 
 @app.get("/claims")
 async def list_claims(
@@ -185,19 +209,33 @@ async def list_claims(
       page_size — claims per page (default 20)
     """
     if config.use_mock:
-        source_claims = MOCK_CLAIMS
+        source_claims = [*MOCK_CLAIMS, *_session_claims]
     else:
         try:
             source_claims = await openimis.get_claims_parsed()
             if not source_claims:
                 logger.warning("openIMIS returned 0 claims — falling back to mock")
-                source_claims = MOCK_CLAIMS
+                source_claims = [*MOCK_CLAIMS, *_session_claims]
         except Exception as exc:
             logger.warning("openIMIS unreachable (%s) — falling back to mock", exc)
-            source_claims = MOCK_CLAIMS
+            source_claims = [*MOCK_CLAIMS, *_session_claims]
 
     # Apply in-session corrections
-    claims = [_session_corrections.get(c["id"], c) for c in source_claims]
+    repository = get_repository()
+    if is_oracle_active(repository):
+        if not config.use_mock:
+            raise HTTPException(status_code=503, detail="Oracle mode is restricted to synthetic demo claims; live openIMIS data is disabled")
+        try:
+            claims = repository.sync_claims(source_claims)
+        except Exception as exc:
+            logger.warning("Oracle claim sync failed (%s)", type(exc).__name__)
+            raise HTTPException(status_code=503, detail="Oracle database is unavailable; try again or use oracle_with_fallback") from None
+        if not is_oracle_active(repository):
+            claims = [_session_corrections.get(c["id"], c) for c in source_claims]
+            chain.record_claims_received(claims)
+    else:
+        claims = [_session_corrections.get(c["id"], c) for c in source_claims]
+        chain.record_claims_received(claims)
 
     # Score all claims
     scored = []
@@ -249,7 +287,41 @@ async def list_claims(
 
 @app.get("/claims/{claim_id}")
 async def get_claim(claim_id: str):
-    return get_claim_or_404(claim_id)
+    claim = get_claim_or_404(claim_id)
+    try:
+        chain.record_claim_received(claim)
+    except Exception as exc:
+        raise _storage_unavailable(exc, "Claim intake could not be recorded") from None
+    return claim
+
+
+@app.post("/claims")
+async def create_claim(claim: dict):
+    """Add a demo claim to its owning department's inbox for this server session."""
+    import uuid
+
+    department = str(claim.get("department", "")).strip().lower()
+    if department not in {"outpatient", "maternity", "renal", "surgical"}:
+        raise HTTPException(status_code=422, detail="Choose a valid owning department")
+    created = {
+        **claim,
+        "id": claim.get("id") or f"SHA-CLM-DEMO-{uuid.uuid4().hex[:8].upper()}",
+        "facility_name": "Kerugoya Level 5 Hospital",
+        "facility_code": "KRG-005",
+        "department": department,
+    }
+    repository = get_repository()
+    try:
+        if is_oracle_active(repository):
+            created = repository.create_claim(created)
+        if not is_oracle_active(repository):
+            _session_claims.insert(0, created)
+            chain.record_claim_received(created)
+    except Exception as exc:
+        logger.warning("Claim creation failed (%s)", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Claim could not be saved to the selected database") from None
+    result = validate(created)
+    return {"claim": created, "_preview": {"score": result["score"], "status": result["status"], "color": result["color"], "error_count": result["error_count"], "warning_count": result["warning_count"]}}
 
 
 @app.post("/claims/{claim_id}/validate")
@@ -276,7 +348,9 @@ async def validate_arbitrary(claim: dict):
     """
     if not claim:
         raise HTTPException(status_code=400, detail="Request body must be a claim dict")
-    result = full_pipeline(claim)
+    # This endpoint accepts an arbitrary preview payload. It is deliberately
+    # not saved as a claim version or included in the audit trail.
+    result = full_pipeline(claim, record_audit=False)
     return result
 
 
@@ -287,15 +361,139 @@ async def correct_claim(claim_id: str, corrections: dict):
     The frontend sends the full corrected claim dict in the body.
     """
     original = get_claim_or_404(claim_id)
+    try:
+        chain.record_claim_received(original)
+    except Exception as exc:
+        raise _storage_unavailable(exc, "Claim intake could not be recorded") from None
 
     # Merge: original fields overridden by corrections
-    updated = {**original, **corrections, "id": claim_id}
-    _session_corrections[claim_id] = updated
+    public_corrections = {key: value for key, value in corrections.items() if not str(key).startswith("_")}
+    updated = {**original, **public_corrections, "id": claim_id}
+    try:
+        chain.record_claim_correction(claim_id, original, updated)
+    except Exception as exc:
+        raise _storage_unavailable(exc, "Correction and its audit event could not be saved") from None
+    if not is_oracle_active(get_repository()):
+        _session_corrections[claim_id] = updated
 
     result = full_pipeline(updated)
     logger.info("Claim %s corrected — new score: %d", claim_id, result["score"])
 
     return {"claim": updated, "validation": result}
+
+
+@app.post("/claims/{claim_id}/department-review")
+async def record_department_review(claim_id: str, review_event: dict):
+    """Append a fingerprinted department action; raw notes/evidence stay client-side."""
+    claim = get_claim_or_404(claim_id)
+    try:
+        chain.record_claim_received(claim)
+    except Exception as exc:
+        raise _storage_unavailable(exc, "Claim intake could not be recorded") from None
+    department = str(review_event.get("department", "")).strip().lower()
+    if department != str(claim.get("department", "")).strip().lower():
+        raise HTTPException(status_code=422, detail="Department does not own this claim")
+    action = str(review_event.get("action", ""))
+    allowed_actions = {
+        "department_check_completed", "department_check_reopened",
+        "department_evidence_saved", "department_signed_off",
+        "department_signoff_revoked", "department_reviewer_updated",
+        "department_review_note_saved",
+    }
+    fingerprint = str(review_event.get("review_fingerprint", ""))
+    completed_checks = review_event.get("completed_checks", [])
+    if (action not in allowed_actions or not re.fullmatch(r"[0-9a-f]{64}", fingerprint)
+            or not isinstance(completed_checks, list)
+            or len(completed_checks) > 30
+            or any(not isinstance(item, str) or len(item) > 120 for item in completed_checks)):
+        raise HTTPException(status_code=422, detail="Invalid department review event")
+    review_event["actor_label"] = str(review_event.get("actor_label", ""))[:120]
+    try:
+        event = chain.record_department_review(
+            claim_id, department, review_event, action,
+            str(review_event.get("step_title", ""))[:120] or None,
+            claim,
+        )
+    except Exception as exc:
+        raise _storage_unavailable(exc, "Department action could not be recorded") from None
+    return {"recorded": event is not None, "event": event}
+
+
+@app.get("/claims/{claim_id}/department-review")
+async def get_department_review_state(claim_id: str, department: str):
+    claim = get_claim_or_404(claim_id)
+    department = department.strip().lower()
+    if department != str(claim.get("department", "")).strip().lower():
+        raise HTTPException(status_code=422, detail="Department does not own this claim")
+    try:
+        review = get_repository().get_department_review(claim_id, department)
+        return {"review": review}
+    except Exception as exc:
+        logger.warning("Department review read failed (%s)", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Department review storage is unavailable") from None
+
+
+@app.put("/claims/{claim_id}/department-review")
+async def save_department_review_state(claim_id: str, body: dict):
+    claim = get_claim_or_404(claim_id)
+    department = str(body.get("department", "")).strip().lower()
+    review = body.get("review")
+    if department != str(claim.get("department", "")).strip().lower():
+        raise HTTPException(status_code=422, detail="Department does not own this claim")
+    if not isinstance(review, dict):
+        raise HTTPException(status_code=422, detail="A review state object is required")
+    try:
+        saved = get_repository().save_department_review(claim_id, department, review)
+        return {"review": saved, "saved": True}
+    except Exception as exc:
+        logger.warning("Department review save failed (%s)", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Department review could not be saved") from None
+
+
+@app.get("/outcomes")
+async def get_outcomes(claim_id: str | None = None):
+    try:
+        return {"outcomes": get_repository().list_outcomes(claim_id)}
+    except Exception as exc:
+        logger.warning("Outcome read failed (%s)", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Outcome storage is unavailable") from None
+
+
+@app.post("/outcomes")
+async def save_outcome(body: dict):
+    required = ("id", "claimId", "outcome", "recordedAt")
+    if any(not body.get(field) for field in required):
+        raise HTTPException(status_code=422, detail="Outcome id, claimId, outcome and recordedAt are required")
+    claim = get_claim_or_404(str(body["claimId"]))
+    if len(str(body.get("note", ""))) > 2000:
+        raise HTTPException(status_code=422, detail="Outcome note is too long")
+    if body.get("department") != (claim.get("department") or "Unassigned"):
+        raise HTTPException(status_code=422, detail="Outcome department does not match the claim")
+    try:
+        saved = get_repository().save_outcome(body)
+        return {"outcome": saved, "saved": True}
+    except Exception as exc:
+        logger.warning("Outcome save failed (%s)", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Outcome could not be saved") from None
+
+
+@app.post("/claims/{claim_id}/staff-review")
+async def record_staff_review(claim_id: str, review_event: dict):
+    """Record the officer's review of the currently saved claim version."""
+    claim = get_claim_or_404(claim_id)
+    try:
+        chain.record_claim_received(claim)
+    except Exception as exc:
+        raise _storage_unavailable(exc, "Claim intake could not be recorded") from None
+    reviewer = str(review_event.get("reviewer", "")).strip()[:120]
+    decision = str(review_event.get("decision", ""))
+    if not reviewer or decision not in {"reviewed", "correction_requested"}:
+        raise HTTPException(status_code=422, detail="Reviewer name and a valid review decision are required")
+    try:
+        event = chain.record_staff_review(claim_id, claim, reviewer, decision)
+    except Exception as exc:
+        raise _storage_unavailable(exc, "Staff review could not be recorded") from None
+    return {"recorded": event is not None, "event": event}
 
 
 @app.post("/claims/{claim_id}/submit")
@@ -305,9 +503,17 @@ async def submit_claim(claim_id: str):
     Blocked if there are any error-severity rule failures remaining.
     """
     claim = get_claim_or_404(claim_id)
+    try:
+        chain.record_claim_received(claim)
+    except Exception as exc:
+        raise _storage_unavailable(exc, "Claim intake could not be recorded") from None
     result = validate(claim)
 
     if result["error_count"] > 0:
+        try:
+            chain.record_submission(claim_id, claim, "blocked", f"{result['error_count']} validation errors remain")
+        except Exception as exc:
+            raise _storage_unavailable(exc, "Submission result could not be recorded") from None
         raise HTTPException(
             status_code=400,
             detail=(
@@ -320,6 +526,10 @@ async def submit_claim(claim_id: str):
 
     if config.use_mock:
         logger.info("MOCK submit — would POST ClaimResponse for %s", claim_id)
+        try:
+            chain.record_submission(claim_id, claim, "mocked", "Mock mode; no payer submission was made")
+        except Exception as exc:
+            raise _storage_unavailable(exc, "Submission result could not be recorded") from None
         return {
             "submitted": True,
             "mode": "mock",
@@ -331,6 +541,7 @@ async def submit_claim(claim_id: str):
 
     try:
         openimis_resp = await openimis.post_claim_response(fhir_cr)
+        chain.record_submission(claim_id, claim, "accepted_by_openimis", "openIMIS returned a response")
         logger.info("openIMIS accepted ClaimResponse for %s", claim_id)
         return {
             "submitted": True,
@@ -341,6 +552,7 @@ async def submit_claim(claim_id: str):
             "fhir_claim_response": fhir_cr,
         }
     except Exception as exc:
+        chain.record_submission(claim_id, claim, "failed", "openIMIS request failed")
         logger.error("openIMIS submission failed: %s", exc)
         raise HTTPException(status_code=502, detail=f"openIMIS rejected the submission: {exc}")
 
@@ -357,6 +569,7 @@ async def ussd_callback(
     networkCode: str = Form(default=""),
     serviceCode: str = Form(default=""),
     text: str = Form(default=""),
+    x_ussd_secret: str = Header(default="", alias="X-USSD-Secret"),
 ):
     """
     Africa's Talking USSD callback.
@@ -365,10 +578,14 @@ async def ussd_callback(
     We respond with plain text: 'CON <msg>' to continue or 'END <msg>' to close.
     Registered as callback URL in the AT dashboard under USSD settings.
     """
+    if config.USSD_SHARED_SECRET and x_ussd_secret != config.USSD_SHARED_SECRET:
+        raise HTTPException(status_code=401, detail="Invalid USSD callback secret")
+
+    masked_phone = f"***{phoneNumber[-3:]}" if len(phoneNumber) >= 3 else "***"
     logger.info(
         "USSD | session=%s phone=%s text=%r",
         sessionId,
-        phoneNumber,
+        masked_phone,
         text,
     )
 
