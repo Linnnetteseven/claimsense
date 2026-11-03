@@ -21,6 +21,7 @@ export const api = {
     return request(`/claims${qs ? `?${qs}` : ""}`);
   },
   getClaim: (id) => request(`/claims/${id}`),
+  createClaim: (claimData) => request("/claims", { method: "POST", body: JSON.stringify(claimData) }),
   validateClaim: (id) => request(`/claims/${id}/validate`, { method: "POST" }),
   validateRaw: (claimData) =>
     request("/validate", { method: "POST", body: JSON.stringify(claimData) }),
@@ -30,5 +31,19 @@ export const api = {
       body: JSON.stringify(correctedData),
     }),
   getClaimAudit: (id) => request(`/claims/${id}/audit`),
+  recordDepartmentReview: (id, event) =>
+    request(`/claims/${id}/department-review`, { method: "POST", body: JSON.stringify(event) }),
+  getDepartmentReview: (id, department) =>
+    request(`/claims/${id}/department-review?department=${encodeURIComponent(department)}`),
+  saveDepartmentReview: (id, department, review) =>
+    request(`/claims/${id}/department-review`, {
+      method: "PUT", body: JSON.stringify({ department, review }),
+    }),
+  getOutcomes: (claimId) => request(`/outcomes${claimId ? `?claim_id=${encodeURIComponent(claimId)}` : ""}`),
+  saveOutcome: (outcome) => request("/outcomes", { method: "POST", body: JSON.stringify(outcome) }),
+  recordStaffReview: (id, event) =>
+    request(`/claims/${id}/staff-review`, { method: "POST", body: JSON.stringify(event) }),
   verifyAuditChain: () => request(`/audit/verify`),
+  anchorLedger: (secret) => request("/ledger/anchor", { method: "POST", headers: { "X-Anchor-Secret": secret } }),
+  verifyLedgerAnchor: () => request("/ledger/verify-anchor"),
 };
