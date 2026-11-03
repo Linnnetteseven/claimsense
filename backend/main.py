@@ -31,6 +31,7 @@ from fhir.client import openimis
 from llm.explainer import explain_errors
 from audit import chain, anchor
 from db.factory import get_repository, is_oracle_active, configured_backend
+from db.connection import connection_mode as oracle_connection_mode
 import hmac
 import re
 
@@ -92,6 +93,7 @@ async def database_health():
     return {
         "configured_backend": configured_backend(),
         "active_backend": active,
+        "connection_mode": active if active == "redis" else oracle_connection_mode(),
         "connected": connected,
         "durable": durable,
     }

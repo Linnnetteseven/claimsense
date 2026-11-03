@@ -256,10 +256,10 @@ Claim data and department evidence are never written to the blockchain. With the
 
 The default remains Redis/in-process behavior. Set `DB_BACKEND=oracle` only when you deliberately want claims, claim versions, validation runs, department checklist/sign-off state, outcomes, and the privacy-safe audit ledger in Oracle Autonomous Database. `DB_BACKEND=oracle_with_fallback` uses Oracle while available and switches to the existing Redis behavior after an Oracle failure; fallback writes can split across stores, so use it for demos rather than as a consistency guarantee.
 
-1. Create an application database user in Autonomous Database and download/unzip its wallet to a private folder outside this repository. Never commit the wallet or `.env`.
+1. Create an application database user in Autonomous Database. Choose either walletless TLS or wallet-based mTLS. Walletless TLS avoids wallet download, but TLS must be enabled on the database and your client IP must be permitted by its network access rules. Oracle documents both Python connection options [here](https://docs.oracle.com/en/cloud/paas/autonomous-database/serverless/adbsb/connecting-python.html).
 2. Apply [backend/db/schema.sql](backend/db/schema.sql) once in APEX SQL Workshop or SQL Developer using the application schema user.
-3. Copy [.env.example](.env.example) to `.env`, then fill `ORACLE_USER`, `ORACLE_PASSWORD`, `ORACLE_DSN`, `ORACLE_WALLET_DIR`, and `ORACLE_WALLET_PASSWORD`. Select `DB_BACKEND=oracle`. The driver uses python-oracledb Thin mode, so no Oracle Client installation is needed.
-4. Install the backend requirements and start FastAPI as usual. Check `GET /health/db`; it reports configured/active backend and connectivity, never credentials.
+3. Set `DB_BACKEND=oracle` and fill `ORACLE_USER`, `ORACLE_PASSWORD`, and `ORACLE_DSN` in the repo-root `.env`. For **walletless TLS**, enable TLS for the Autonomous Database, then copy the TLS connection string from its Database Connection page into `ORACLE_DSN`; leave `ORACLE_WALLET_DIR` and `ORACLE_WALLET_PASSWORD` blank. For **wallet mTLS**, use the wallet's TNS alias for `ORACLE_DSN`, set `ORACLE_WALLET_DIR` to its extracted folder, and set `ORACLE_WALLET_PASSWORD`. Never commit `.env` or wallet files.
+4. Install the backend requirements and start FastAPI as usual. Check `GET /health/db`; it reports `connection_mode` as `walletless_tls`, `wallet_mtls`, or `redis`, alongside connectivity, and never returns credentials.
 
 Example from PowerShell at the repository root:
 
@@ -282,7 +282,7 @@ python scripts/migrate_redis_to_oracle.py
 
 The script verifies Redis before writing, refuses a non-empty Oracle target, re-chains entries using payload digests and random references, then verifies the copied chain. It does not delete or modify Redis. Since the old chain hashed full event payloads (including claim IDs), the imported v3 chain has different hashes; old Avalanche anchors are retained in `legacy_anchors` for reference and do not verify the new chain. After migration, manually anchor the Oracle chain again. Only seeded synthetic claims are migrated into the claims tables; old in-memory corrections and claims cannot be recovered after their backend process has exited.
 
-The Oracle feature has no authentication or departmental authorization yet and is not suitable for real patient data or a live hospital pilot. Keep demo inputs synthetic, restrict database network access, and use a least-privilege application user rather than the Autonomous Database ADMIN account.
+The Oracle feature has no authentication or departmental authorization yet and is not suitable for real patient data or a live hospital pilot. Keep demo inputs synthetic, restrict database network access, and use a least-privilege application user rather than the Autonomous Database ADMIN account. Walletless TLS still uses encrypted TLS and database username/password credentials, but requires TLS to be enabled and the caller's IP to be allowed by the database ACL.
 
 ### Showcase deployment
 

@@ -12,6 +12,11 @@ _pool_lock = Lock()
 logger = logging.getLogger(__name__)
 
 
+def connection_mode() -> str:
+    """Return the configured Oracle transport without exposing connection details."""
+    return "wallet_mtls" if os.getenv("ORACLE_WALLET_DIR", "").strip() else "walletless_tls"
+
+
 def get_pool():
     """Create the pool once per process. python-oracledb defaults to Thin mode."""
     global _pool
@@ -27,26 +32,31 @@ def get_pool():
         dsn = os.getenv("ORACLE_DSN", "").strip()
         wallet_dir = os.getenv("ORACLE_WALLET_DIR", "").strip()
         wallet_password = os.getenv("ORACLE_WALLET_PASSWORD", "")
-        if not all((user, password, dsn, wallet_dir)):
+        if not all((user, password, dsn)):
             raise RuntimeError("Oracle database configuration is incomplete")
-        wallet_path = Path(wallet_dir).expanduser().resolve()
-        if not wallet_path.is_dir():
-            raise RuntimeError("Oracle wallet directory is unavailable")
 
-        # No init_oracle_client call: Thin mode uses the wallet files directly.
-        _pool = oracledb.create_pool(
+        # No init_oracle_client call: both transports use python-oracledb Thin mode.
+        pool_options = dict(
             user=user,
             password=password,
             dsn=dsn,
-            config_dir=str(wallet_path),
-            wallet_location=str(wallet_path),
-            wallet_password=wallet_password or None,
             min=1,
             max=5,
             increment=1,
             timeout=30,
             wait_timeout=5000,
         )
+        if wallet_dir:
+            wallet_path = Path(wallet_dir).expanduser().resolve()
+            if not wallet_path.is_dir():
+                raise RuntimeError("Oracle wallet directory is unavailable")
+            pool_options.update(
+                config_dir=str(wallet_path),
+                wallet_location=str(wallet_path),
+                wallet_password=wallet_password or None,
+            )
+
+        _pool = oracledb.create_pool(**pool_options)
         return _pool
 
 
