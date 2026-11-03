@@ -34,6 +34,8 @@ from db.factory import get_repository, is_oracle_active, configured_backend
 from db.connection import connection_mode as oracle_connection_mode
 import hmac
 import re
+import traceback
+from pathlib import Path
 
 logging.basicConfig(
     level=logging.DEBUG if config.DEBUG else logging.INFO,
@@ -230,7 +232,15 @@ async def list_claims(
         try:
             claims = repository.sync_claims(source_claims)
         except Exception as exc:
-            logger.warning("Oracle claim sync failed (%s)", type(exc).__name__)
+            frames = traceback.extract_tb(exc.__traceback__)
+            if frames:
+                frame = frames[-1]
+                logger.warning(
+                    "Oracle claim sync failed (%s at %s:%d in %s)",
+                    type(exc).__name__, Path(frame.filename).name, frame.lineno, frame.name,
+                )
+            else:
+                logger.warning("Oracle claim sync failed (%s)", type(exc).__name__)
             raise HTTPException(status_code=503, detail="Oracle database is unavailable; try again or use oracle_with_fallback") from None
         if not is_oracle_active(repository):
             claims = [_session_corrections.get(c["id"], c) for c in source_claims]
