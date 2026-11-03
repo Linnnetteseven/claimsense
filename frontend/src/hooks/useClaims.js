@@ -36,11 +36,10 @@ export function useClaims() {
     setError(null);
     try {
       const data = await api.getClaims();
-      // Ensure our default test mock claim is always present at the top
       const loadedClaims = data.claims ?? [];
-      const hasMock = loadedClaims.some((c) => c.id === DEFAULT_MOCK_CLAIM.id);
-      setClaims(hasMock ? loadedClaims : [DEFAULT_MOCK_CLAIM, ...loadedClaims]);
-      return data.claims ?? [];
+      // Use server claims when available; Jane Doe is only an offline fallback.
+      setClaims(loadedClaims.length ? loadedClaims : [DEFAULT_MOCK_CLAIM]);
+      return loadedClaims;
     } catch {
       // In case of error (e.g. backend offline), fall back to our mock claim list
       setClaims([DEFAULT_MOCK_CLAIM]);

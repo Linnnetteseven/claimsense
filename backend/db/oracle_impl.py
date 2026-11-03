@@ -32,6 +32,15 @@ def _read_lob(value):
     return value.read() if hasattr(value, "read") else value
 
 
+def _load_json(value):
+    value = _read_lob(value)
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, (str, bytes, bytearray)):
+        return json.loads(value)
+    raise TypeError(f"Expected JSON text from Oracle; received {type(value).__name__}")
+
+
 def _clean_claim(claim: dict) -> dict:
     return {key: value for key, value in claim.items() if not str(key).startswith("_")}
 
@@ -149,13 +158,13 @@ class OracleRepository:
                               TO_CHAR(l.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
                               d.details_json
                        FROM audit_ledger l LEFT JOIN audit_event_details d ON d.event_seq = l.seq
-                       ORDER BY l.seq"""
+                       ORDER BY l.seq""",
+                    fetch_lobs=False,
                 )
                 rows = cursor.fetchall()
         records = []
         for seq, claim_ref, event_type, payload_hash, prev_hash, digest, chain_version, timestamp, details in rows:
-            record = _read_lob(details)
-            record = json.loads(record) if record else {}
+            record = _load_json(details) if details else {}
             record.update({
                 "seq": int(seq), "claim_ref": claim_ref, "type": event_type,
                 "payload_hash": payload_hash, "prev_hash": prev_hash,
@@ -182,11 +191,12 @@ class OracleRepository:
         cursor.execute(
             "SELECT claim_ref, payload, current_version, status FROM claims WHERE id = :claim_id" + suffix,
             {"claim_id": claim_id},
+            fetch_lobs=False,
         )
         row = cursor.fetchone()
         if not row:
             return None
-        return row[0], json.loads(_read_lob(row[1])), int(row[2]), row[3]
+        return row[0], _load_json(row[1]), int(row[2]), row[3]
 
     def _ensure_claim_cursor(self, connection, cursor, claim: dict, created_by="system") -> tuple[dict, bool]:
         claim = _clean_claim(claim)
@@ -257,8 +267,8 @@ class OracleRepository:
     def list_claims(self) -> list[dict]:
         with get_pool().acquire() as connection:
             with connection.cursor() as cursor:
-                cursor.execute("SELECT payload FROM claims ORDER BY created_at DESC")
-                return [json.loads(_read_lob(row[0])) for row in cursor.fetchall()]
+                cursor.execute("SELECT payload FROM claims ORDER BY created_at DESC", fetch_lobs=False)
+                return [_load_json(row[0]) for row in cursor.fetchall()]
 
     def create_claim(self, claim: dict) -> dict:
         with get_pool().acquire() as connection:
@@ -365,9 +375,10 @@ class OracleRepository:
                 cursor.execute(
                     "SELECT review_json FROM department_signoffs WHERE claim_id = :claim_id AND department = :department",
                     {"claim_id": claim_id, "department": department.lower()},
+                    fetch_lobs=False,
                 )
                 row = cursor.fetchone()
-                return json.loads(_read_lob(row[0])) if row else None
+                return _load_json(row[0]) if row else None
 
     def save_department_review(self, claim_id: str, department: str, review: dict) -> dict:
         department = department.lower()

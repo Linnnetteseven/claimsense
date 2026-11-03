@@ -7,6 +7,7 @@ BACKEND = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
 
 from db import connection
+from db.oracle_impl import _load_json
 import main
 
 
@@ -66,3 +67,13 @@ def test_db_health_reports_active_connection_mode(monkeypatch):
     assert response["active_backend"] == "oracle"
     assert response["connection_mode"] == "walletless_tls"
     assert response["connected"] is True
+
+
+def test_oracle_json_values_accept_text_and_lob_values():
+    class FakeLob:
+        @staticmethod
+        def read():
+            return '{"synthetic": true}'
+
+    assert _load_json('{"synthetic": true}') == {"synthetic": True}
+    assert _load_json(FakeLob()) == {"synthetic": True}
