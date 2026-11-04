@@ -4,6 +4,7 @@ import ValidationPanel from "./components/ValidationPanel.jsx";
 import LandingPage from "./components/LandingPage.jsx";
 import AddClaimModal from "./components/AddClaimModal.jsx";
 import PrivacyToggle from "./components/PrivacyToggle.jsx";
+import ManagementOverview from "./components/ManagementOverview.jsx";
 import { useClaims } from "./hooks/useClaims.js";
 
 export default function App() {
@@ -116,6 +117,14 @@ export default function App() {
             </div>
           </div>
           <PrivacyToggle enabled={privacyMode} onToggle={() => setPrivacyMode((enabled) => !enabled)} />
+          <button
+            type="button"
+            onClick={() => setView(view === "overview" ? "dashboard" : "overview")}
+            aria-current={view === "overview" ? "page" : undefined}
+            className={`w-full rounded-lg border px-3 py-2 text-xs font-semibold transition-colors ${view === "overview" ? "border-teal-500 bg-teal-50 text-teal-800 dark:bg-teal-950/40 dark:text-teal-300" : "border-slate-200 text-slate-600 hover:border-teal-400 hover:text-teal-700 dark:border-slate-800 dark:text-slate-300"}`}
+          >
+            {view === "overview" ? "← Return to claims" : "Management Overview"}
+          </button>
         </div>
 
         {/* Search & Stats Header */}
@@ -171,12 +180,16 @@ export default function App() {
 
       {/* Right workspace: Dynamic Workspace */}
       <main className="flex-1 flex flex-col overflow-hidden bg-slate-100/60 dark:bg-slate-900/40">
-        <ValidationPanel
-          key={selectedClaim?.id ?? "no-claim"}
-          claim={selectedClaim} 
-          privacyMode={privacyMode}
-          onValidationComplete={handleValidationComplete}
-        />
+        {view === "overview" ? (
+          <ManagementOverview onBack={() => setView("dashboard")} />
+        ) : (
+          <ValidationPanel
+            key={selectedClaim?.id ?? "no-claim"}
+            claim={selectedClaim}
+            privacyMode={privacyMode}
+            onValidationComplete={handleValidationComplete}
+          />
+        )}
       </main>
 
       {addModalOpen && (

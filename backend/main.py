@@ -32,6 +32,7 @@ from llm.explainer import explain_errors
 from audit import chain, anchor
 from db.factory import get_repository, is_oracle_active, configured_backend
 from db.connection import connection_mode as oracle_connection_mode
+from db.analytics import VIEW_QUERIES
 import hmac
 import re
 import traceback
@@ -99,6 +100,48 @@ async def database_health():
         "connected": connected,
         "durable": durable,
     }
+
+
+def _analytics_repository():
+    repository = get_repository()
+    if not is_oracle_active(repository):
+        raise HTTPException(status_code=503, detail="Analytics requires Oracle backend")
+    return repository
+
+
+@app.get("/analytics/overview")
+async def get_management_analytics():
+    """Return aggregate metrics from Oracle views; no claim-level data is selected."""
+    repository = _analytics_repository()
+    try:
+        kpis = repository.fetch_analytics_view("management_kpis")
+        return {
+            "available": True,
+            "kpis": kpis[0] if kpis else {},
+            "claims_by_status": repository.fetch_analytics_view("claims_by_status"),
+            "score_by_department": repository.fetch_analytics_view("score_by_department"),
+            "top_failed_rules": repository.fetch_analytics_view("top_failed_rules"),
+            "rework_trend_weekly": repository.fetch_analytics_view("rework_trend_weekly"),
+            "ledger_status": (repository.fetch_analytics_view("ledger_status") or [{}])[0],
+            "signoff_progress": repository.fetch_analytics_view("signoff_progress"),
+        }
+    except Exception as exc:
+        logger.warning("Analytics views unavailable (%s)", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Analytics views are unavailable; apply backend/db/views.sql as HAKIKI_APP") from None
+
+
+@app.get("/analytics/{view_name}")
+async def get_management_analytics_view(view_name: str):
+    """Read one named analytics view. View names are an allowlist, never SQL input."""
+    view_names = set(VIEW_QUERIES) - {"management_kpis"}
+    if view_name not in view_names:
+        raise HTTPException(status_code=404, detail="Analytics view not found")
+    repository = _analytics_repository()
+    try:
+        return {"items": repository.fetch_analytics_view(view_name)}
+    except Exception as exc:
+        logger.warning("Analytics view read failed (%s)", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Analytics view is unavailable; apply backend/db/views.sql as HAKIKI_APP") from None
 
 # Session-scoped store for user corrections.
 # Persists for the life of the server process (sufficient for a demo).

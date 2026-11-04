@@ -46,4 +46,5 @@ export const api = {
   verifyAuditChain: () => request(`/audit/verify`),
   anchorLedger: (secret) => request("/ledger/anchor", { method: "POST", headers: { "X-Anchor-Secret": secret } }),
   verifyLedgerAnchor: () => request("/ledger/verify-anchor"),
+  getManagementAnalytics: () => request("/analytics/overview"),
 };

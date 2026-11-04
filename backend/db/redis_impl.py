@@ -68,6 +68,9 @@ class RedisRepository:
     def save_outcome(self, outcome):
         raise RepositoryUnavailable("Server-side outcomes are enabled only with DB_BACKEND=oracle")
 
+    def fetch_analytics_view(self, view_name):
+        raise RepositoryUnavailable("Analytics requires Oracle backend")
+
     def _redis_available(self):
         from audit.chain import _audit_enabled
         return _audit_enabled()

@@ -8,6 +8,7 @@ import logging
 import secrets
 
 from .connection import get_pool, health_check
+from .analytics import fetch_view_rows
 
 logger = logging.getLogger(__name__)
 GENESIS_HASH = "0" * 16
@@ -74,6 +75,12 @@ class OracleRepository:
 
     def health(self) -> bool:
         return health_check()
+
+    def fetch_analytics_view(self, view_name: str) -> list[dict]:
+        """Read an aggregate analytics view using a fixed SELECT allowlist."""
+        with get_pool().acquire() as connection:
+            with connection.cursor() as cursor:
+                return fetch_view_rows(cursor, view_name)
 
     def _append_cursor(self, connection, cursor, payload: dict) -> dict:
         cursor.execute(
