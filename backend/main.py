@@ -318,6 +318,7 @@ async def create_claim(claim: dict):
     created = {
         **claim,
         "id": claim.get("id") or f"SHA-CLM-DEMO-{uuid.uuid4().hex[:8].upper()}",
+        "is_synthetic": True,
         "facility_name": "Kerugoya Level 5 Hospital",
         "facility_code": "KRG-005",
         "department": department,

@@ -199,6 +199,7 @@ class OracleRepository:
         return row[0], _load_json(row[1]), int(row[2]), row[3]
 
     def _ensure_claim_cursor(self, connection, cursor, claim: dict, created_by="system") -> tuple[dict, bool]:
+        created_at_value = claim.get("_created_at")
         claim = _clean_claim(claim)
         claim_id = str(claim.get("id") or "")
         if not claim_id:
@@ -209,13 +210,14 @@ class OracleRepository:
         claim_ref = secrets.token_hex(16)
         payload_text = _canonical(claim)
         fingerprint = _claim_fingerprint(claim)
+        created_at, _ = _timestamp(created_at_value)
         cursor.execute(
-            """INSERT INTO claims (id, claim_ref, facility, department, payload, status, current_version)
-               VALUES (:id, :claim_ref, :facility, :department, :payload, :status, 1)""",
+            """INSERT INTO claims (id, claim_ref, facility, department, payload, status, current_version, created_at)
+               VALUES (:id, :claim_ref, :facility, :department, :payload, :status, 1, :created_at)""",
             {
                 "id": claim_id, "claim_ref": claim_ref,
                 "facility": claim.get("facility_name"), "department": claim.get("department"),
-                "payload": payload_text, "status": claim.get("status"),
+                "payload": payload_text, "status": claim.get("status"), "created_at": created_at,
             },
         )
         event_payload = {
@@ -278,6 +280,7 @@ class OracleRepository:
                 return cleaned
 
     def record_claim_correction(self, claim_id: str, previous: dict, updated: dict) -> dict | None:
+        corrected_at, corrected_timestamp = _timestamp(updated.get("_corrected_at"))
         updated = {**_clean_claim(updated), "id": claim_id}
         with get_pool().acquire() as connection:
             with connection.cursor() as cursor:
@@ -302,7 +305,7 @@ class OracleRepository:
                     "from_version": current_version, "version": version,
                     "previous_version_fingerprint": _claim_fingerprint(current),
                     "version_fingerprint": fingerprint, "changed_fields": changed,
-                    "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "timestamp": corrected_timestamp,
                 })
                 cursor.execute(
                     """UPDATE claims SET payload = :payload, department = :department,
@@ -313,16 +316,18 @@ class OracleRepository:
                 )
                 cursor.execute(
                     """INSERT INTO claim_versions
-                       (claim_id, version, payload, created_by, version_fingerprint, event_seq, changed_fields_json)
-                       VALUES (:claim_id, :version, :payload, :created_by, :fingerprint, :event_seq, :changed)""",
+                       (claim_id, version, payload, created_by, version_fingerprint, event_seq, changed_fields_json, created_at)
+                       VALUES (:claim_id, :version, :payload, :created_by, :fingerprint, :event_seq, :changed, :created_at)""",
                     {"claim_id": claim_id, "version": version, "payload": _canonical(updated),
                      "created_by": "claims_officer", "fingerprint": fingerprint,
-                     "event_seq": event["seq"], "changed": _canonical({"fields": changed})},
+                     "event_seq": event["seq"], "changed": _canonical({"fields": changed}),
+                     "created_at": corrected_at},
                 )
                 connection.commit()
                 return event
 
     def record_validation(self, claim_id: str, claim: dict, result: dict) -> dict | None:
+        created_at, timestamp = _timestamp(result.get("recorded_at"))
         with get_pool().acquire() as connection:
             with connection.cursor() as cursor:
                 selected = self._select_claim(cursor, claim_id, for_update=True)
@@ -336,17 +341,23 @@ class OracleRepository:
                     "version_fingerprint": fingerprint, "score": result["score"],
                     "status": result["status"], "error_count": result["error_count"],
                     "warning_count": result["warning_count"],
-                    "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "timestamp": timestamp,
                 })
                 cursor.execute(
                     """INSERT INTO validation_runs
-                       (claim_id, version, score, status, error_count, warning_count, counts_json, ledger_seq)
-                       VALUES (:claim_id, :version, :score, :status, :errors, :warnings, :counts, :ledger_seq)""",
+                       (claim_id, version, score, status, error_count, warning_count, counts_json, ledger_seq, created_at)
+                       VALUES (:claim_id, :version, :score, :status, :errors, :warnings, :counts, :ledger_seq, :created_at)""",
                     {"claim_id": claim_id, "version": version, "score": result["score"],
                      "status": result["status"], "errors": result["error_count"],
                      "warnings": result["warning_count"],
-                     "counts": _canonical({"errors": result["error_count"], "warnings": result["warning_count"]}),
-                     "ledger_seq": event["seq"]},
+                     "counts": _canonical({
+                         "errors": result["error_count"], "warnings": result["warning_count"],
+                         "failed_rules": [
+                             {"rule_id": rule.get("rule_id"), "rule_name": rule.get("rule_id")}
+                             for rule in result.get("results", []) if not rule.get("passed")
+                         ],
+                     }),
+                     "ledger_seq": event["seq"], "created_at": created_at},
                 )
                 connection.commit()
                 return event

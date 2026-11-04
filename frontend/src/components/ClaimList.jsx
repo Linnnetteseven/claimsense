@@ -185,6 +185,11 @@ export default function ClaimList({ claims: claimsProp, loading, privacyMode, se
                       {highlightMatch(claim.facility_name || "", query)}
                     </p>
                     <div className="pl-4 flex flex-wrap items-center gap-x-2 gap-y-1">
+                      {claim.is_synthetic && (
+                        <span className="text-[10px] font-bold uppercase tracking-wide text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 rounded px-1.5 py-0.5">
+                          Synthetic demo data
+                        </span>
+                      )}
                       <span className="text-xs text-teal-700 dark:text-teal-400 font-semibold uppercase">
                         {claim.department || "unassigned"}
                       </span>

@@ -256,3 +256,8 @@ MOCK_CLAIMS: list[dict] = [
     },
 ]
 
+# These seven historical examples are also fictional demo records. The badge
+# prevents them from being confused with facility or SHA records in a demo.
+for _claim in MOCK_CLAIMS:
+    _claim["is_synthetic"] = True
+
