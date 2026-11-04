@@ -16,6 +16,8 @@ export default function App() {
   const [selectedId, setSelectedId] = useState(null);
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [privacyMode, setPrivacyMode] = useState(() => localStorage.getItem("presentationPrivacy") === "on");
+  const [demoMode, setDemoMode] = useState(() => localStorage.getItem("hakikiDemoMode") === "on");
+  const [demoRole, setDemoRole] = useState(() => localStorage.getItem("hakikiDemoRole") || "Lab");
 
   function handleValidationComplete(claimId, validationResult, updatedClaim) {
     patchPreview(claimId, validationResult);
@@ -46,6 +48,11 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("presentationPrivacy", privacyMode ? "on" : "off");
   }, [privacyMode]);
+
+  useEffect(() => {
+    localStorage.setItem("hakikiDemoMode", demoMode ? "on" : "off");
+    localStorage.setItem("hakikiDemoRole", demoRole);
+  }, [demoMode, demoRole]);
 
   if (!selectedId && claims.length > 0) {
     setSelectedId(claims[0].id);
@@ -125,6 +132,26 @@ export default function App() {
           >
             {view === "overview" ? "← Return to claims" : "Management Overview"}
           </button>
+          <div className="rounded-lg border border-slate-200 dark:border-slate-800 p-2.5">
+            <label className="flex items-center justify-between gap-3 text-xs font-semibold text-slate-600 dark:text-slate-300">
+              <span>Demo mode <span className="font-normal text-slate-400">(demo only)</span></span>
+              <input
+                type="checkbox"
+                checked={demoMode}
+                onChange={(event) => setDemoMode(event.target.checked)}
+                aria-label="Enable demo role display"
+                className="h-4 w-4 accent-teal-600"
+              />
+            </label>
+            {demoMode && (
+              <div className="mt-2 flex items-center gap-2">
+                <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-teal-700 dark:text-teal-400">Demo role</span>
+                <select value={demoRole} onChange={(event) => setDemoRole(event.target.value)} aria-label="Select demo role" className="min-w-0 flex-1 rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+                  {["Lab", "Pharmacy", "Billing"].map((role) => <option key={role}>{role}</option>)}
+                </select>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Search & Stats Header */}

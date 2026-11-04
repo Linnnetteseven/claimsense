@@ -12,7 +12,9 @@ export default function DeptGuideTab({ claimId, department, privacyMode = false 
   const [review, setReview] = useState(() => readDepartmentReview(claimId, department));
   const [auditSyncState, setAuditSyncState] = useState("idle");
   const [storageSyncState, setStorageSyncState] = useState("loading");
-  const editedDuringLoad = useRef(false);
+  const reviewRef = useRef(review);
+  const localRevision = useRef(0);
+  const pendingSaves = useRef(0);
   const requiredSteps = useMemo(() => guide?.steps.filter((step) => step.required) || [], [guide]);
   const completedRequired = requiredSteps.filter((step) => review.completed[step.title]).length;
   const documentedRequired = requiredSteps.filter((step) => review.completed[step.title] && String(review.evidence[step.title] || "").trim()).length;
@@ -42,34 +44,50 @@ export default function DeptGuideTab({ claimId, department, privacyMode = false 
 
   useEffect(() => {
     let active = true;
-    editedDuringLoad.current = false;
     const localReview = readDepartmentReview(claimId, department);
+    reviewRef.current = localReview;
     setReview(localReview);
     setStorageSyncState("loading");
-    api.getDepartmentReview(claimId, departmentKey).then(({ review: remoteReview }) => {
-      if (!active || editedDuringLoad.current) return;
-      if (remoteReview) {
-        setReview(remoteReview);
-        try { window.localStorage.setItem(storageKey, JSON.stringify(remoteReview)); } catch { /* Server copy remains available. */ }
-        window.dispatchEvent(new CustomEvent(DEPARTMENT_REVIEW_UPDATED, { detail: { claimId, department: departmentKey } }));
-        setStorageSyncState("saved");
-      } else {
-        setStorageSyncState("local");
-        if (Object.keys(localReview.completed || {}).length || Object.keys(localReview.evidence || {}).length
-            || localReview.signedOffAt || localReview.reviewer || localReview.note) {
+    const hasLocalState = Boolean(Object.keys(localReview.completed || {}).length
+      || Object.keys(localReview.evidence || {}).length || localReview.signedOffAt
+      || localReview.reviewer || localReview.note);
+
+    const refreshSharedReview = async (initial = false) => {
+      const revisionAtRequest = localRevision.current;
+      try {
+        const { review: remoteReview } = await api.getDepartmentReview(claimId, departmentKey);
+        if (!active || revisionAtRequest !== localRevision.current || pendingSaves.current > 0) return;
+        if (remoteReview) {
+          if (JSON.stringify(remoteReview) !== JSON.stringify(reviewRef.current)) {
+            reviewRef.current = remoteReview;
+            setReview(remoteReview);
+            try { window.localStorage.setItem(storageKey, JSON.stringify(remoteReview)); } catch { /* Server copy remains available. */ }
+            window.dispatchEvent(new CustomEvent(DEPARTMENT_REVIEW_UPDATED, { detail: { claimId, department: departmentKey } }));
+          }
+          setStorageSyncState("saved");
+        } else if (initial && hasLocalState) {
+          pendingSaves.current += 1;
           api.saveDepartmentReview(claimId, departmentKey, localReview)
             .then(() => active && setStorageSyncState("saved"))
-            .catch(() => active && setStorageSyncState("local"));
+            .catch(() => active && setStorageSyncState("local"))
+            .finally(() => { pendingSaves.current = Math.max(0, pendingSaves.current - 1); });
+        } else if (initial) {
+          setStorageSyncState("local");
         }
+      } catch {
+        if (active && initial) setStorageSyncState("local");
       }
-    }).catch(() => {
-      if (active) setStorageSyncState("local");
-    });
-    return () => { active = false; };
+    };
+
+    refreshSharedReview(true);
+    const pollId = window.setInterval(() => refreshSharedReview(), 5000);
+    return () => { active = false; window.clearInterval(pollId); };
   }, [storageKey, claimId, department, departmentKey]);
 
   const save = (next, auditAction = null, stepTitle = null) => {
-    editedDuringLoad.current = true;
+    localRevision.current += 1;
+    const revision = localRevision.current;
+    reviewRef.current = next;
     setReview(next);
     try {
       window.localStorage.setItem(storageKey, JSON.stringify(next));
@@ -78,9 +96,11 @@ export default function DeptGuideTab({ claimId, department, privacyMode = false 
       // Keep the checklist usable in memory if browser storage is unavailable.
     }
     setStorageSyncState("saving");
+    pendingSaves.current += 1;
     api.saveDepartmentReview(claimId, departmentKey, next)
-      .then(() => setStorageSyncState("saved"))
-      .catch(() => setStorageSyncState("local"));
+      .then(() => { if (revision === localRevision.current) setStorageSyncState("saved"); })
+      .catch(() => { if (revision === localRevision.current) setStorageSyncState("local"); })
+      .finally(() => { pendingSaves.current = Math.max(0, pendingSaves.current - 1); });
     if (auditAction) logReviewAction(next, auditAction, stepTitle);
   };
 
