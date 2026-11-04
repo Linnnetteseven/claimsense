@@ -354,12 +354,28 @@ def _hash_record_v3(prev_hash: str, record: dict) -> str:
     }
     return hashlib.sha256((prev_hash + _canonical(body)).encode()).hexdigest()
 
+def _hash_record_v4(prev_hash: str, record: dict) -> Optional[str]:
+    """Use the exact hash input persisted alongside Oracle ledger records."""
+    header = record.get("hash_input")
+    expected_keys = {"seq", "claim_ref", "event_type", "payload_hash", "timestamp"}
+    if not isinstance(header, dict) or set(header) != expected_keys:
+        return None
+    if (header.get("seq") != record.get("seq")
+            or header.get("claim_ref") != record.get("claim_ref")
+            or header.get("event_type") != record.get("type")
+            or header.get("payload_hash") != record.get("payload_hash")
+            or header.get("timestamp") != record.get("timestamp")):
+        return None
+    return hashlib.sha256((prev_hash + _canonical(header)).encode()).hexdigest()
+
 def verify_records(records: list[dict]) -> dict:
     prev_hash = _GENESIS_HASH
     for i, record in enumerate(records):
         payload = {k: v for k, v in record.items() if k not in ("prev_hash", "hash")}
         if record.get("hash_version") == 3:
             expected = _hash_record_v3(prev_hash, record)
+        elif record.get("hash_version") == 4:
+            expected = _hash_record_v4(prev_hash, record)
         elif record.get("hash_version") == 2:
             expected = _hash_record(prev_hash, payload)
         else:

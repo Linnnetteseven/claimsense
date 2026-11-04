@@ -6,7 +6,7 @@ import pytest
 
 BACKEND = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
-from audit.chain import verify_records, _hash_record
+from audit.chain import verify_records, _hash_record, _hash_record_v4
 from audit import anchor
 
 def make_records(count=3):
@@ -29,6 +29,29 @@ def test_deleted_tail_breaks_anchor_root_range():
 def test_reordered_records_break_chain():
     records=make_records(); records[0],records[1]=records[1],records[0]
     assert verify_records(records)["verified"] is False
+
+def test_v4_oracle_records_verify_using_persisted_hash_input():
+    header = {
+        "seq": 1, "claim_ref": "a" * 32, "event_type": "claim_received",
+        "payload_hash": "b" * 64, "timestamp": "2026-11-04T07:04:44Z",
+    }
+    previous = "0" * 16
+    digest = _hash_record_v4(previous, {"hash_input": header, **{
+        "seq": 1, "claim_ref": "a" * 32, "type": "claim_received",
+        "payload_hash": "b" * 64, "timestamp": header["timestamp"],
+    }})
+    record = {
+        "seq": 1, "claim_ref": "a" * 32, "type": "claim_received",
+        "payload_hash": "b" * 64, "timestamp": header["timestamp"],
+        "hash_input": header, "prev_hash": previous, "hash": digest, "hash_version": 4,
+    }
+    assert verify_records([record])["verified"] is True
+
+    changed_input = {**record, "timestamp": "2026-11-04T10:04:44+03:00"}
+    assert verify_records([changed_input])["verified"] is False
+
+    changed_header = {**record, "hash_input": {**header, "payload_hash": "c" * 64}}
+    assert verify_records([changed_header])["verified"] is False
 
 def test_anchor_uses_owner_and_waits_for_receipt(monkeypatch):
     records=make_records(2)

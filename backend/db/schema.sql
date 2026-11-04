@@ -72,7 +72,7 @@ CREATE TABLE audit_ledger (
     hash          CHAR(64) NOT NULL UNIQUE,
     created_at    TIMESTAMP WITH TIME ZONE NOT NULL,
     anchored_tx   VARCHAR2(80),
-    chain_version NUMBER(2) DEFAULT 3 NOT NULL
+    chain_version NUMBER(2) DEFAULT 4 NOT NULL
 );
 
 CREATE TABLE anchors (

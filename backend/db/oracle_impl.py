@@ -57,6 +57,11 @@ def _hash_v3(previous: str, seq: int, claim_ref: str | None, event_type: str, pa
     return hashlib.sha256((previous + _canonical(header)).encode("utf-8")).hexdigest()
 
 
+def _hash_v4(previous: str, header: dict) -> str:
+    """Hash an explicitly persisted canonical header for Oracle round trips."""
+    return hashlib.sha256((previous + _canonical(header)).encode("utf-8")).hexdigest()
+
+
 def _safe_details(payload: dict) -> dict:
     # These fields make the timeline useful but never contain identifiers,
     # free-text notes, patient data, staff names, or evidence references.
@@ -190,13 +195,17 @@ class OracleRepository:
         event_type = str(payload.get("type") or "event")[:64]
         created_at, timestamp = _timestamp(payload.get("timestamp"))
         payload_hash = hashlib.sha256(_canonical(payload).encode("utf-8")).hexdigest()
-        digest = _hash_v3(previous, seq, claim_ref, event_type, payload_hash, timestamp)
+        hash_input = {
+            "seq": seq, "claim_ref": claim_ref, "event_type": event_type,
+            "payload_hash": payload_hash, "timestamp": timestamp,
+        }
+        digest = _hash_v4(previous, hash_input)
         anchor_tx = str(payload.get("tx_hash") or "") if event_type == "anchor" else None
         cursor.execute(
             """INSERT INTO audit_ledger
                (seq, claim_ref, event_type, payload_hash, prev_hash, hash, created_at, anchored_tx, chain_version)
                VALUES (:seq, :claim_ref, :event_type, :payload_hash, :prev_hash, :hash,
-                       :created_at, :anchored_tx, 3)""",
+                       :created_at, :anchored_tx, 4)""",
             {
                 "seq": seq, "claim_ref": claim_ref, "event_type": event_type,
                 "payload_hash": payload_hash, "prev_hash": previous, "hash": digest,
@@ -208,6 +217,9 @@ class OracleRepository:
             {"seq": seq, "hash": digest},
         )
         safe_details = _safe_details(payload)
+        # Persist the exact hash preimage next to the event. Reconstructing it
+        # from Oracle columns can vary with driver/NLS timestamp formatting.
+        safe_details["hash_input"] = hash_input
         if event_type == "anchor":
             cursor.execute(
                 """INSERT INTO anchors (from_seq, to_seq, root_hash, tx_hash, created_at)
@@ -223,9 +235,10 @@ class OracleRepository:
             {"seq": seq, "details_json": _canonical(safe_details)},
         )
         return {
-            **safe_details, "type": event_type, "seq": seq, "hash_version": 3,
+            **safe_details, "type": event_type, "seq": seq, "hash_version": 4,
             "claim_ref": claim_ref, "payload_hash": payload_hash,
-            "timestamp": timestamp, "prev_hash": previous, "hash": digest,
+            "timestamp": timestamp, "hash_input": hash_input,
+            "prev_hash": previous, "hash": digest,
         }
 
     def append_ledger_event(self, payload: dict) -> dict:
@@ -262,11 +275,14 @@ class OracleRepository:
         records = []
         for seq, claim_ref, event_type, payload_hash, prev_hash, digest, chain_version, timestamp, details in rows:
             record = _load_json(details) if details else {}
+            hash_input = record.get("hash_input")
             record.update({
                 "seq": int(seq), "claim_ref": claim_ref, "type": event_type,
                 "payload_hash": payload_hash, "prev_hash": prev_hash,
                 "hash": digest, "hash_version": int(chain_version), "timestamp": timestamp,
             })
+            if int(chain_version) == 4 and isinstance(hash_input, dict):
+                record["timestamp"] = hash_input.get("timestamp")
             if event_type == "anchor":
                 # Anchor metadata is safe on-chain and needed by the Fuji UI.
                 record["anchored_tx"] = record.get("tx_hash")
