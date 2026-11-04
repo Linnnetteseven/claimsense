@@ -16,6 +16,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
+from dotenv import load_dotenv  # noqa: E402
+
+# The standalone CLI must load the same repo-root configuration as the app.
+# Existing shell variables take precedence over values from .env.
+load_dotenv(ROOT / ".env")
+
 from audit.chain import verify_records  # noqa: E402
 from db.factory import configured_backend, get_repository  # noqa: E402
 from validation.engine import validate  # noqa: E402
