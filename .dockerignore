@@ -1,0 +1,17 @@
+.git
+.env
+.env.*
+!.env.example
+**/.venv
+**/venv
+**/node_modules
+**/__pycache__
+**/*.pyc
+oracle-wallet
+wallet
+evidence_packs
+frontend
+frontend-vite-backup
+*.zip
+**/.pytest_cache
+**/dist
