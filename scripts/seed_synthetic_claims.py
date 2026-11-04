@@ -21,7 +21,7 @@ from db.factory import configured_backend, get_repository  # noqa: E402
 from validation.engine import validate  # noqa: E402
 
 FACILITY = "Kerugoya County Referral Hospital (SYNTHETIC DEMO)"
-DEPARTMENTS = ("outpatient", "inpatient", "maternity", "laboratory", "pharmacy", "radiology", "surgery")
+DEPARTMENTS = ("outpatient", "inpatient", "maternity", "laboratory", "pharmacy", "radiology", "surgical")
 DIAGNOSES = {
     "outpatient": ("J18.9", "E11.9", "K29.7", "I10"),
     "inpatient": ("J18.9", "K35.8", "E11.9", "N39.0"),
@@ -29,21 +29,20 @@ DIAGNOSES = {
     "laboratory": ("D64.9", "E11.9", "N18.6", "J18.9"),
     "pharmacy": ("E11.9", "I10", "J18.9", "K59.0"),
     "radiology": ("S09.9", "J18.9", "K35.8", "M54.5"),
-    "surgery": ("K35.8", "K40.9", "S52.5", "N20.0"),
+    "surgical": ("K35.8", "K40.9", "S52.5", "N20.0"),
 }
 SERVICE_CODES = {
     "outpatient": "SYN-OPD-CONSULT", "inpatient": "SYN-IPD-CARE",
     "maternity": "SYN-MAT-DELIVERY", "laboratory": "SYN-LAB-CBC",
     "pharmacy": "SYN-PHARM-DISPENSE", "radiology": "SYN-RAD-IMAGE",
-    "surgery": "SYN-SURG-PROCEDURE",
+    "surgical": "SYN-SURG-PROCEDURE",
 }
 
 
 def _baseline(index: int, department: str, received: date, rng: random.Random) -> dict:
     patient_ref = f"SYN-{index:06d}"
     maternity = department == "maternity"
-    surgical = department == "surgery"
-    renal_demo = department == "inpatient" and index % 11 == 0
+    surgical = department == "surgical"
     amount = rng.randrange(1800, 12500, 100)
     claim = {
         "id": f"SYN-CLM-{index:06d}", "is_synthetic": True,
@@ -63,10 +62,6 @@ def _baseline(index: int, department: str, received: date, rng: random.Random) -
         claim.update({"partograph_id": f"SYN-PARTO-{index:06d}", "is_delivery": True})
     if surgical:
         claim.update({"overnight_stay": True, "postop_notes_attached": f"SYN-POSTOP-{index:06d}"})
-    if renal_demo:
-        claim.update({"department": "renal", "sessions_this_week": 3,
-                      "diagnosis_code": "N18.6", "items": [{"service_code": "SYN-REN-DIALYSIS",
-                      "description": "Synthetic dialysis session", "quantity": 1, "unit_price": amount}]})
     return claim
 
 

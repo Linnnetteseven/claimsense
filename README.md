@@ -284,6 +284,28 @@ The script verifies Redis before writing, refuses a non-empty Oracle target, re-
 
 The Oracle feature has no authentication or departmental authorization yet and is not suitable for real patient data or a live hospital pilot. Keep demo inputs synthetic, restrict database network access, and use a least-privilege application user rather than the Autonomous Database ADMIN account. Walletless TLS still uses encrypted TLS and database username/password credentials, but requires TLS to be enabled and the caller's IP to be allowed by the database ACL.
 
+#### Synthetic workload and Management Overview
+
+The optional seeder creates 250 deterministic, visibly synthetic claim records for **Kerugoya County Referral Hospital (SYNTHETIC DEMO)**, dated across the prior 12 weeks. Its final validation groups target 55% Ready, 30% Needs Review, and 15% High Risk; about one-third have an earlier, lower-scoring validation followed by a correction and improved revalidation. These are workflow examples, not SHA rules or real facility data. It writes through the normal repository and ledger functions and verifies the audit chain at the end. It refuses Redis mode.
+
+Apply `backend/db/schema.sql` and then `backend/db/views.sql` as `HAKIKI_APP`. The views in `views.sql` are the shared source for the Management Overview metrics. To seed or reset synthetic rows, use the backend virtual environment from the repo root:
+
+```powershell
+$env:DB_BACKEND = "oracle"
+backend\venv\Scripts\python.exe scripts/seed_synthetic_claims.py --count 250
+backend\venv\Scripts\python.exe scripts/seed_synthetic_claims.py --count 250 --reset
+```
+
+Run these from the repository root; if your shell is already there, use `backend\venv\Scripts\python.exe` instead. `--reset` removes synthetic claim/version/run/sign-off/outcome rows only. Append-only ledger events and anchors are retained, so seeding again adds a new history rather than erasing the audit record. Do not run the seeder against a database containing real claims. The Management Overview tab is read-only and shows a Redis-mode explanation when Oracle is not selected.
+
+#### Evidence packs
+
+The Audit Trail can export a minimized JSON pack and PDF summary for synthetic-reference claims only. `EVIDENCE_STORAGE=local` is the default; files go under `EVIDENCE_DIR` (default `./evidence_packs/`), which is ignored by Git. The pack contains versions/fingerprints, validation summaries, department sign-off status, hash-chain entries, and any related anchor transaction references; it excludes the claim body and staff note text. OCI object upload is not enabled in this build, so `EVIDENCE_STORAGE=oci` safely falls back to local storage with a response message. Do not publish generated packs unless you have reviewed their contents and destination.
+
+#### Experimental Oracle Select AI
+
+`POST /analytics/ask` is disabled unless `ENABLE_SELECT_AI=true`. It requires an Autonomous Database Select AI provider credential/profile and a separate `HAKIKI_ANALYTICS` database account. Apply `backend/db/views.sql` first, then follow the ordered steps/comments in `scripts/select_ai_setup.sql`: an administrator creates the reader and grants SELECT only on the aggregate views; the reader configures the Select AI profile with an explicit view `object_list`. Set `ORACLE_SELECT_AI_USER`, `ORACLE_SELECT_AI_PASSWORD`, and the regular Oracle DSN/wallet settings for the service. The endpoint asks Oracle for SQL, rejects non-SELECT or unapproved relations, and executes as the view-only reader; it does not run as `HAKIKI_APP`. Keep it disabled if the provider/profile is unavailable. Provider credentials and supported models depend on the OCI setup, and Select AI may not be available on the Autonomous Database Free tier. No live provider call is part of local tests.
+
 ### Showcase deployment
 
 The frontend and FastAPI backend should be deployed as separate Vercel projects for a quick preview. The frontend project uses `frontend` as its root, `npm run build` as its build command, and `dist` as its output directory. Set `VITE_API_URL` to the public backend URL. The backend project uses `backend` as its root (the existing `backend/vercel.json` routes requests to FastAPI); set `DEPLOYED_FRONTEND_URL` or include the frontend URL in `ALLOWED_ORIGINS`.

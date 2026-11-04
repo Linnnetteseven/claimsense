@@ -16,12 +16,12 @@ Install Docker Engine and the Docker Compose plugin using Docker's official Ubun
 
 ## 2. Put the code and environment file in place
 
-Clone the reviewed branch or the approved merge of it, then create a private environment file from the example:
+After the reviewed branch has been merged or otherwise made available to the deployment account, clone that repository revision and create a private environment file from the example:
 
 ```bash
 sudo mkdir -p /opt/hakiki
 sudo chown "$USER":"$USER" /opt/hakiki
-git clone --branch oracle-db https://github.com/Linnnetteseven/claimsense.git /opt/hakiki
+git clone https://github.com/Linnnetteseven/claimsense.git /opt/hakiki
 cd /opt/hakiki
 cp .env.example .env
 chmod 600 .env
@@ -50,7 +50,7 @@ Do not include wallet files, `.env`, passwords, private keys, or API secrets in 
 
 ## 4. Apply Oracle SQL and start the backend
 
-Connect to Autonomous Database as `HAKIKI_APP` and apply the application schema (`backend/db/schema.sql`) if it has not been applied. Then apply `backend/db/views.sql` as the same schema user to enable Management Overview. The SQL scripts create the database objects; they do not seed data automatically.
+Connect to Autonomous Database as `HAKIKI_APP` and apply the application schema (`backend/db/schema.sql`) if it has not been applied. Then apply `backend/db/views.sql` as the same schema user to enable Management Overview. The SQL scripts create the database objects; they do not seed data automatically. For an all-synthetic demo dataset, follow the seeder instructions in the root README after verifying the target database is a demo database.
 
 Start the backend:
 

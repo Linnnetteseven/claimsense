@@ -18,6 +18,9 @@ def test_generated_claims_have_expected_bands_and_synthetic_refs():
     assert all(claim["is_synthetic"] for claim in claims)
     assert all(claim["patient_id"].startswith("SYN-") for claim in claims)
     assert all(claim["facility_name"] == "Kerugoya County Referral Hospital (SYNTHETIC DEMO)" for claim in claims)
+    assert {claim["department"] for claim in claims} == {
+        "outpatient", "inpatient", "maternity", "laboratory", "pharmacy", "radiology", "surgical",
+    }
     assert all(0 <= (date(2026, 11, 4) - date.fromisoformat(claim["_created_at"][:10])).days < 84 for claim in claims)
     groups = {name: [c for c in claims if c["_seed_group"] == name] for name in ("ready", "review", "high_risk")}
     assert [len(groups[name]) for name in ("ready", "review", "high_risk")] == [138, 75, 37]
@@ -25,6 +28,7 @@ def test_generated_claims_have_expected_bands_and_synthetic_refs():
                            ("review", lambda score: 60 <= score <= 84),
                            ("high_risk", lambda score: score < 60)):
         assert all(expected(validate(claim)["score"]) for claim in groups[name])
+    assert sum(1 for claim in claims if claim["_seed_group"] == "high_risk") == 37
 
 
 def test_seed_is_idempotent_records_versions_and_verifies_chain(monkeypatch):

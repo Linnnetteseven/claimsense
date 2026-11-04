@@ -24,6 +24,7 @@ class _Config:
     ANCHOR_PRIVATE_KEY: str = os.getenv("ANCHOR_PRIVATE_KEY", "")
     ANCHOR_API_SECRET: str = os.getenv("ANCHOR_API_SECRET", "")
     CHAIN_ID: int = int(os.getenv("CHAIN_ID", "43113"))
+    ENABLE_SELECT_AI: bool = os.getenv("ENABLE_SELECT_AI", "false").strip().lower() == "true"
 
     @property
     def use_mock(self) -> bool:

@@ -34,6 +34,7 @@ from db.factory import get_repository, is_oracle_active, configured_backend
 from db.connection import connection_mode as oracle_connection_mode
 from db.analytics import VIEW_QUERIES
 from evidence.packs import store_evidence_pack
+from db.select_ai import run_readonly_analytics_query, SelectAINotAvailable
 import os
 import hmac
 import re
@@ -144,6 +145,25 @@ async def get_management_analytics_view(view_name: str):
     except Exception as exc:
         logger.warning("Analytics view read failed (%s)", type(exc).__name__)
         raise HTTPException(status_code=503, detail="Analytics view is unavailable; apply backend/db/views.sql as HAKIKI_APP") from None
+
+
+@app.post("/analytics/ask")
+async def ask_management_analytics(body: dict):
+    """Experimental natural-language analytics, backed by a view-only Oracle user."""
+    if not config.ENABLE_SELECT_AI:
+        raise HTTPException(status_code=503, detail="Experimental Oracle Select AI is disabled")
+    question = str(body.get("question", "")).strip()
+    if not question or len(question) > 500:
+        raise HTTPException(status_code=422, detail="Provide an analytics question under 500 characters")
+    if re.search(r"\b(patient|member|person|individual|patient name|phone|national id|claim id|specific claim)\b|SYN-[0-9]{6}|SHA-CLM-[A-Z0-9-]+", question, re.IGNORECASE):
+        raise HTTPException(status_code=422, detail="Ask about aggregate facility metrics only; patient-level questions are not supported")
+    try:
+        return {"experimental": True, **run_readonly_analytics_query(question)}
+    except SelectAINotAvailable:
+        return {"available": False, "message": "Oracle Select AI is not available for this database or profile."}
+    except Exception as exc:
+        logger.warning("Experimental Select AI query unavailable (%s)", type(exc).__name__)
+        return {"available": False, "message": "Oracle Select AI is not available for this database or profile."}
 
 
 @app.post("/claims/{claim_id}/evidence-pack")

@@ -14,17 +14,19 @@ function StatusDonut({ rows }) {
   const total = values.reduce((sum, value) => sum + value, 0);
   const ready = Number(rows.find((row) => row.status === "Ready for Submission")?.claim_count || 0);
   const review = Number(rows.find((row) => row.status === "Needs Review")?.claim_count || 0);
-  const high = Math.max(0, total - ready - review);
+  const high = Number(rows.find((row) => String(row.status || "").toLowerCase().startsWith("high risk"))?.claim_count || 0);
+  const known = ready + review + high;
   const readyEnd = total ? ready / total * 100 : 0;
   const reviewEnd = total ? readyEnd + review / total * 100 : 0;
-  const style = { background: `conic-gradient(#0f9f8f 0% ${readyEnd}%, #f59e0b ${readyEnd}% ${reviewEnd}%, #ef4444 ${reviewEnd}% 100%)` };
+  const highEnd = total ? reviewEnd + high / total * 100 : 0;
+  const style = { background: `conic-gradient(#0f9f8f 0% ${readyEnd}%, #f59e0b ${readyEnd}% ${reviewEnd}%, #ef4444 ${reviewEnd}% ${highEnd}%, #94a3b8 ${highEnd}% 100%)` };
   return (
     <div className="flex flex-wrap items-center gap-6">
-      <div className="relative h-36 w-36 rounded-full" style={style} role="img" aria-label={`${ready} ready, ${review} needing review, ${high} high risk`}>
+      <div className="relative h-36 w-36 rounded-full" style={style} role="img" aria-label={`${ready} ready, ${review} needing review, ${high} high risk, ${Math.max(0, total - known)} other statuses`}>
         <div className="absolute inset-4 flex flex-col items-center justify-center rounded-full bg-white dark:bg-slate-950"><span className="text-2xl font-bold text-slate-800 dark:text-slate-100">{number(total)}</span><span className="text-[10px] uppercase tracking-wide text-slate-500">claims</span></div>
       </div>
       <ul className="min-w-48 flex-1 space-y-2 text-sm">
-        {[["Ready", ready, "bg-teal-500"], ["Needs review", review, "bg-amber-500"], ["High risk", high, "bg-red-500"]].map(([label, value, color]) => <li key={label} className="flex items-center gap-2 text-slate-600 dark:text-slate-300"><span className={`h-2.5 w-2.5 rounded-full ${color}`} />{label}<strong className="ml-auto text-slate-800 dark:text-slate-100">{number(value)}</strong></li>)}
+        {[["Ready", ready, "bg-teal-500"], ["Needs review", review, "bg-amber-500"], ["High risk", high, "bg-red-500"], ["Other statuses", Math.max(0, total - known), "bg-slate-400"]].map(([label, value, color]) => <li key={label} className="flex items-center gap-2 text-slate-600 dark:text-slate-300"><span className={`h-2.5 w-2.5 rounded-full ${color}`} />{label}<strong className="ml-auto text-slate-800 dark:text-slate-100">{number(value)}</strong></li>)}
       </ul>
     </div>
   );
