@@ -19,6 +19,8 @@ frontend/.vite/
 **/.oracle-wallet/
 wallet.zip
 Wallet_*.zip
+oracle-wallet/
+evidence_packs/
 
 # OS
 .DS_Store

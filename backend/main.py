@@ -16,7 +16,7 @@ load_dotenv()
 
 import logging
 from fastapi import Form, BackgroundTasks, Header
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, FileResponse
 from ussd.handler import handle_ussd_session
 from contextlib import asynccontextmanager
 
@@ -33,6 +33,8 @@ from audit import chain, anchor
 from db.factory import get_repository, is_oracle_active, configured_backend
 from db.connection import connection_mode as oracle_connection_mode
 from db.analytics import VIEW_QUERIES
+from evidence.packs import store_evidence_pack
+import os
 import hmac
 import re
 import traceback
@@ -142,6 +144,44 @@ async def get_management_analytics_view(view_name: str):
     except Exception as exc:
         logger.warning("Analytics view read failed (%s)", type(exc).__name__)
         raise HTTPException(status_code=503, detail="Analytics view is unavailable; apply backend/db/views.sql as HAKIKI_APP") from None
+
+
+@app.post("/claims/{claim_id}/evidence-pack")
+async def create_claim_evidence_pack(claim_id: str):
+    """Export minimized lifecycle evidence for synthetic-reference claims only."""
+    repository = get_repository()
+    if not is_oracle_active(repository):
+        raise HTTPException(status_code=503, detail="Evidence packs require Oracle backend")
+    try:
+        pack = repository.get_evidence_pack_data(claim_id)
+        if not pack:
+            raise HTTPException(status_code=404, detail="Claim not found")
+        saved = store_evidence_pack(pack)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("Evidence pack creation failed (%s)", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Evidence pack could not be created") from None
+    response = {key: value for key, value in saved.items() if key not in {"json_path", "pdf_path"}}
+    response["files"] = {
+        "json": f"/evidence-packs/{saved['pack_id']}.json",
+        "pdf": f"/evidence-packs/{saved['pack_id']}.pdf",
+    }
+    return response
+
+
+@app.get("/evidence-packs/{pack_id}.{extension}")
+async def download_local_evidence_pack(pack_id: str, extension: str):
+    if not re.fullmatch(r"[0-9a-f]{24}", pack_id) or extension not in {"json", "pdf"}:
+        raise HTTPException(status_code=404, detail="Evidence pack not found")
+    directory = Path(os.getenv("EVIDENCE_DIR", "./evidence_packs")).expanduser().resolve()
+    path = (directory / f"{pack_id}.{extension}").resolve()
+    if path.parent != directory or not path.is_file():
+        raise HTTPException(status_code=404, detail="Evidence pack not found")
+    media_type = "application/json" if extension == "json" else "application/pdf"
+    return FileResponse(path, media_type=media_type, filename=path.name)
 
 # Session-scoped store for user corrections.
 # Persists for the life of the server process (sufficient for a demo).

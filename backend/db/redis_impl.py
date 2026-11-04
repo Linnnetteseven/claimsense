@@ -71,6 +71,9 @@ class RedisRepository:
     def fetch_analytics_view(self, view_name):
         raise RepositoryUnavailable("Analytics requires Oracle backend")
 
+    def get_evidence_pack_data(self, claim_id):
+        raise RepositoryUnavailable("Evidence packs require Oracle backend")
+
     def _redis_available(self):
         from audit.chain import _audit_enabled
         return _audit_enabled()

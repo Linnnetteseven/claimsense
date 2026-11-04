@@ -47,4 +47,6 @@ export const api = {
   anchorLedger: (secret) => request("/ledger/anchor", { method: "POST", headers: { "X-Anchor-Secret": secret } }),
   verifyLedgerAnchor: () => request("/ledger/verify-anchor"),
   getManagementAnalytics: () => request("/analytics/overview"),
+  createEvidencePack: (claimId) => request(`/claims/${claimId}/evidence-pack`, { method: "POST" }),
+  evidencePackFileUrl: (path) => `${BASE_URL}${path}`,
 };

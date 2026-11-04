@@ -8,6 +8,9 @@ export default function AuditTrailTab({ claimId, privacyMode = false }) {
   const [anchorState, setAnchorState] = useState({ status: "not_checked", anchors: [] });
   const [anchorBusy, setAnchorBusy] = useState(false);
   const [anchorError, setAnchorError] = useState("");
+  const [evidenceBusy, setEvidenceBusy] = useState(false);
+  const [evidenceResult, setEvidenceResult] = useState(null);
+  const [evidenceError, setEvidenceError] = useState("");
 
   const verifyAnchor = useCallback(async () => {
     setAnchorState((current) => ({ ...current, status: "checking" }));
@@ -28,6 +31,15 @@ export default function AuditTrailTab({ claimId, privacyMode = false }) {
       await verifyAnchor();
     } catch (err) { setAnchorError(err.message); }
     finally { setAnchorBusy(false); }
+  };
+
+  const exportEvidencePack = async () => {
+    setEvidenceBusy(true);
+    setEvidenceError("");
+    setEvidenceResult(null);
+    try { setEvidenceResult(await api.createEvidencePack(claimId)); }
+    catch (exportError) { setEvidenceError(exportError.message || "Could not create evidence pack."); }
+    finally { setEvidenceBusy(false); }
   };
 
   useEffect(() => {
@@ -99,6 +111,13 @@ export default function AuditTrailTab({ claimId, privacyMode = false }) {
           ) : "No saved claim version fingerprint is available yet."}
         </div>
       )}
+
+      <section className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-4">
+        <div><h3 className="text-sm font-bold text-slate-800 dark:text-slate-200">Synthetic evidence pack</h3><p className="text-xs text-slate-500 dark:text-slate-400">Exports version fingerprints, checks, sign-offs, ledger hashes and anchor status without claim contents.</p></div>
+        <button type="button" onClick={exportEvidencePack} disabled={evidenceBusy} className="rounded-lg bg-teal-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{evidenceBusy ? "Preparing…" : "Export evidence pack"}</button>
+        {evidenceError && <p role="alert" className="w-full text-xs text-red-600 dark:text-red-400">{evidenceError}</p>}
+        {evidenceResult && <div role="status" className="w-full space-y-2 text-xs text-slate-600 dark:text-slate-300"><p>{evidenceResult.message || "Evidence pack saved locally."}</p><div className="flex gap-4"><a className="font-semibold text-teal-700 underline dark:text-teal-400" href={api.evidencePackFileUrl(evidenceResult.files.json)} download>Download JSON</a><a className="font-semibold text-teal-700 underline dark:text-teal-400" href={api.evidencePackFileUrl(evidenceResult.files.pdf)} download>Download PDF</a></div></div>}
+      </section>
 
       <div className="bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-850 rounded-2xl p-5 shadow-sm">
         <h3 className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-4">

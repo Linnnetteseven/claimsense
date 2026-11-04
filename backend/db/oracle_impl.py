@@ -82,6 +82,96 @@ class OracleRepository:
             with connection.cursor() as cursor:
                 return fetch_view_rows(cursor, view_name)
 
+    def get_evidence_pack_data(self, claim_id: str) -> dict | None:
+        """Return a synthetic-only, identifier-minimized evidence pack payload."""
+        with get_pool().acquire() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT claim_ref, payload, department FROM claims WHERE id = :claim_id",
+                    {"claim_id": claim_id}, fetch_lobs=False,
+                )
+                claim_row = cursor.fetchone()
+                if not claim_row:
+                    return None
+                claim_ref, claim_payload, department = claim_row
+                claim = _load_json(claim_payload)
+                synthetic_reference = str(claim.get("patient_id") or "")
+                if claim.get("is_synthetic") is not True or not __import__("re").fullmatch(r"SYN-[0-9]{6}", synthetic_reference):
+                    raise ValueError("Evidence packs are available only for synthetic-reference claims")
+
+                cursor.execute(
+                    """SELECT version, created_at, version_fingerprint, changed_fields_json
+                       FROM claim_versions WHERE claim_id = :claim_id ORDER BY version""",
+                    {"claim_id": claim_id}, fetch_lobs=False,
+                )
+                versions = []
+                for version, created_at, fingerprint, changed_fields in cursor.fetchall():
+                    changes = _load_json(changed_fields) if changed_fields else {}
+                    versions.append({"version": int(version), "created_at": created_at.isoformat(),
+                                     "fingerprint": fingerprint,
+                                     "changed_fields": changes.get("fields", [])})
+
+                cursor.execute(
+                    """SELECT version, score, status, error_count, warning_count, counts_json, created_at
+                       FROM validation_runs WHERE claim_id = :claim_id ORDER BY created_at, id""",
+                    {"claim_id": claim_id}, fetch_lobs=False,
+                )
+                validations = []
+                for version, score, status, errors, warnings, counts, created_at in cursor.fetchall():
+                    summary = _load_json(counts) if counts else {}
+                    validations.append({"version": int(version or 1), "score": int(score), "status": status,
+                                        "error_count": int(errors), "warning_count": int(warnings),
+                                        "failed_rules": [item.get("rule_id") for item in summary.get("failed_rules", [])],
+                                        "created_at": created_at.isoformat()})
+
+                cursor.execute(
+                    """SELECT department, status, signed_at FROM department_signoffs
+                       WHERE claim_id = :claim_id ORDER BY department""",
+                    {"claim_id": claim_id},
+                )
+                signoffs = [{"department": row[0], "status": row[1],
+                             "signed_at": row[2].isoformat() if row[2] else None}
+                            for row in cursor.fetchall()]
+
+                cursor.execute(
+                    """SELECT seq, event_type, payload_hash, RTRIM(prev_hash), RTRIM(hash), created_at
+                       FROM audit_ledger WHERE claim_ref = :claim_ref ORDER BY seq""",
+                    {"claim_ref": claim_ref},
+                )
+                ledger_entries = [{"seq": int(row[0]), "event_type": row[1], "payload_hash": row[2],
+                                   "previous_hash": row[3], "hash": row[4],
+                                   "created_at": row[5].isoformat()}
+                                  for row in cursor.fetchall()]
+                claim_seqs = [entry["seq"] for entry in ledger_entries]
+                cursor.execute(
+                    "SELECT from_seq, to_seq, root_hash, tx_hash, created_at FROM anchors ORDER BY id"
+                )
+                anchors = [{"from_seq": int(row[0]), "to_seq": int(row[1]), "root_hash": row[2],
+                            "tx_hash": row[3], "created_at": row[4].isoformat()}
+                           for row in cursor.fetchall()
+                           if any(int(row[0]) <= seq <= int(row[1]) for seq in claim_seqs)]
+
+        if anchors:
+            from audit.anchor import verify_anchors
+            verification = verify_anchors()
+            verified_ranges = {(int(row.get("from_seq", 0)), int(row.get("to_seq", 0))): row.get("status")
+                               for row in verification.get("anchors", [])}
+            for item in anchors:
+                item["verification"] = verified_ranges.get((item["from_seq"], item["to_seq"]), verification.get("status", "unavailable"))
+        else:
+            verification = {"status": "not_anchored", "anchors": []}
+        return {
+            "synthetic_reference": synthetic_reference,
+            "department": department or "Unassigned",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "claim_version_history": versions,
+            "validation_runs": validations,
+            "department_signoffs": signoffs,
+            "ledger_entries": ledger_entries,
+            "anchors": anchors,
+            "anchor_verification": {"status": verification.get("status", "unavailable")},
+        }
+
     def _append_cursor(self, connection, cursor, payload: dict) -> dict:
         cursor.execute(
             "SELECT last_seq, RTRIM(last_hash) FROM audit_ledger_head WHERE singleton_id = 1 FOR UPDATE"
