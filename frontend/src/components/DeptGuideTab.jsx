@@ -264,7 +264,7 @@ export default function DeptGuideTab({ claimId, department, privacyMode = false 
             type="button"
             onClick={signOff}
             disabled={!readyToSignOff || !review.reviewer.trim() || Boolean(review.signedOffAt)}
-            className="rounded-lg px-4 py-2 text-sm font-semibold text-white bg-teal-600 hover:bg-teal-700 disabled:bg-slate-300 disabled:dark:bg-slate-700 disabled:cursor-not-allowed"
+            className="rounded-lg px-4 py-2 text-sm font-semibold text-white bg-teal-700 hover:bg-teal-800 disabled:bg-slate-300 disabled:dark:bg-slate-700 disabled:cursor-not-allowed"
           >
             {isSignedOff ? "Department processing complete" : "Mark department processing complete"}
           </button>

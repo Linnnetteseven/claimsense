@@ -137,11 +137,11 @@ export default function LandingPage({ claims, loading, onEnter, darkMode, onTogg
           ) : (
             <>
               <div className="flex flex-col items-center shrink-0">
-                <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-2 text-center">Average automated score</span>
+                <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-2 text-center">Average automated score</span>
                 <ScoreGauge score={avgScore} />
               </div>
               <div className="border-t md:border-t-0 md:border-l border-slate-100 dark:border-slate-800 pt-5 md:pt-0 md:pl-8 flex-1 w-full">
-                <h3 className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-3.5 text-center md:text-left">Overall claim status</h3>
+                <h3 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-3.5 text-center md:text-left">Overall claim status</h3>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="bg-slate-50 dark:bg-slate-900/60 border border-slate-100 dark:border-slate-850 p-4 rounded-2xl text-center md:text-left">
                     <span className="text-[10px] text-slate-500 dark:text-slate-400 uppercase block font-bold mb-1">Total Claims</span>

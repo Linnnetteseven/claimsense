@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import PropTypes from "prop-types";
-import { LIST_BADGE_CLASSES, LIST_DOT_CLASSES } from "../constants/status.js";
+import { LIST_DOT_CLASSES } from "../constants/status.js";
 import { DEPARTMENT_REVIEW_UPDATED, readDepartmentReview } from "../utils/departmentReview.js";
 import { getOverallStatus } from "../utils/overallStatus.js";
 
@@ -106,47 +106,42 @@ export default function ClaimList({ claims: claimsProp, loading, privacyMode, se
 
   return (
     <div className="flex flex-col h-full">
-      <div className="p-3 space-y-3 border-b border-slate-100 dark:border-slate-800">
+      <div className="space-y-2 border-b border-slate-200 p-2.5 dark:border-slate-800">
         <input
           type={privacyMode ? "password" : "text"}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           aria-label="Search claims"
           placeholder="Search patient or ID..."
-          className="w-full text-sm px-3 py-2.5 border border-slate-200 dark:border-slate-800 rounded-lg bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 outline-none"
+          className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder-slate-500 outline-none focus-visible:ring-2 focus-visible:ring-teal-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:placeholder-slate-400"
         />
-        <label className="block text-xs font-bold uppercase text-slate-600 dark:text-slate-300">
-          Filter by department
-          <select value={activeDepartment} onChange={(e) => setActiveDepartment(e.target.value)} className="mt-1 w-full text-sm normal-case font-medium px-3 py-2.5 border border-slate-200 dark:border-slate-800 rounded-lg bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100">
-            <option value="all">All departments</option>
-            <option value="outpatient">Outpatient</option>
-            <option value="maternity">Maternity</option>
-            <option value="renal">Renal Unit</option>
-            <option value="surgical">Surgical</option>
+        <div className="flex min-w-0 items-center gap-1.5">
+          <select id="claims-department-filter" aria-label="Filter by department" value={activeDepartment} onChange={(e) => setActiveDepartment(e.target.value)} className="w-28 shrink-0 rounded-md border border-slate-300 bg-white px-2 py-2 text-[11px] font-semibold text-slate-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
+            <option value="all">All depts</option><option value="outpatient">Outpatient</option><option value="maternity">Maternity</option><option value="renal">Renal</option><option value="surgical">Surgical</option>
           </select>
-        </label>
-        <div className="flex bg-slate-100 dark:bg-slate-900/60 p-1 rounded-lg border border-slate-200 dark:border-slate-800" role="group" aria-label="Filter claims by overall status">
+          <div className="flex shrink-0 items-center rounded-md border border-slate-300 bg-slate-100 p-0.5 dark:border-slate-700 dark:bg-slate-900" role="group" aria-label="Filter claims by overall status">
           {["all", "ready", "review", "error"].map((tab) => (
             <button
               key={tab}
               type="button"
               onClick={() => setActiveTab(tab)}
               aria-pressed={activeTab === tab}
-              className={`flex-1 py-1.5 text-xs font-bold uppercase rounded-md transition-all ${
+              className={`min-w-8 rounded px-1.5 py-1.5 text-[9px] font-bold uppercase transition-colors ${
                 activeTab === tab
-                  ? "bg-white dark:bg-slate-800 shadow-sm text-slate-800 dark:text-slate-100"
-                  : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300"
+                  ? "bg-teal-800 text-white dark:bg-teal-700"
+                  : "text-slate-700 hover:bg-white dark:text-slate-300 dark:hover:bg-slate-800"
               }`}
             >
               {tab}
             </button>
           ))}
+          </div>
         </div>
       </div>
 
-      <ul className="space-y-2 p-3 overflow-y-auto flex-1">
+      <ul className="flex-1 space-y-1 overflow-y-auto p-1.5">
         {filteredClaims.length === 0 ? (
-          <li className="p-8 text-slate-400 dark:text-slate-500 text-sm text-center font-medium">
+          <li className="p-8 text-slate-500 dark:text-slate-400 text-sm text-center font-medium">
             {query ? `No claims matching "${privacyMode ? "********" : query}"` : "No claims found."}
           </li>
         ) : (
@@ -156,53 +151,29 @@ export default function ClaimList({ claims: claimsProp, loading, privacyMode, se
             const overallStatus = getClaimOverallStatus(claim, departmentReviews);
             const dotColor = overallStatus.status;
             const dotClass = LIST_DOT_CLASSES[dotColor] ?? LIST_DOT_CLASSES.red;
-            const badgeClass = LIST_BADGE_CLASSES[dotColor] ?? LIST_BADGE_CLASSES.red;
 
             return (
               <li key={claim.id}>
                 <button
                   type="button"
                   onClick={() => onSelect(claim.id, claim)}
-                  className={`w-full text-left p-3.5 rounded-xl border transition-all duration-200 block shadow-sm ${
+                  className={`block w-full rounded-md border px-2 py-1.5 text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-700 ${
                     isSelected
-                      ? "bg-teal-50/50 dark:bg-teal-950/25 border-teal-500 ring-1 ring-teal-500/50"
-                      : "bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-850 hover:border-slate-300 dark:hover:border-slate-800 hover:bg-slate-50/50 dark:hover:bg-slate-900/50 active:bg-slate-50 dark:active:bg-slate-900"
+                      ? "border-teal-700 bg-teal-50 dark:border-teal-500 dark:bg-teal-950/40"
+                      : "border-transparent bg-white hover:border-slate-300 hover:bg-slate-50 dark:bg-slate-950 dark:hover:border-slate-700 dark:hover:bg-slate-900"
                   }`}
                 >
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${dotClass}`} />
-                      <p className={`text-sm font-semibold truncate flex-1 min-w-0 ${isSelected ? "text-teal-900 dark:text-teal-350" : "text-slate-800 dark:text-slate-200"}`}>
+                  <div className="flex min-w-0 items-center gap-2">
+                      <span aria-label={overallStatus.label} title={overallStatus.label} className={`h-2 w-2 shrink-0 rounded-full ${dotClass}`} />
+                      <p className={`min-w-0 flex-1 truncate text-xs font-semibold ${isSelected ? "text-teal-900 dark:text-teal-100" : "text-slate-900 dark:text-slate-100"}`}>
                         {privacyMode ? "********" : highlightMatch(claim.patient_name || "Unknown Patient", query)}
                       </p>
-                      {preview.score !== undefined && (
-                        <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 shrink-0" aria-label={`Automated score ${preview.score}`}>
-                          Score {preview.score}
-                        </span>
-                      )}
-                    </div>
-                    <p className="pl-4 text-xs text-slate-500 dark:text-slate-400 font-medium truncate">
-                      {highlightMatch(claim.facility_name || "", query)}
-                    </p>
-                    <div className="pl-4 flex flex-wrap items-center gap-x-2 gap-y-1">
-                      {import.meta.env.VITE_SYNTHETIC_LABEL === "full" && claim.is_synthetic && (
-                        <span className="text-[10px] font-bold uppercase tracking-wide text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 rounded px-1.5 py-0.5">
-                          Synthetic demo data
-                        </span>
-                      )}
-                      <span className="text-xs text-teal-700 dark:text-teal-400 font-semibold uppercase">
-                        {claim.department || "unassigned"}
-                      </span>
-                      <span className="max-w-full truncate text-xs bg-slate-100 dark:bg-slate-900 text-slate-700 dark:text-slate-300 font-semibold px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-800">
-                        {privacyMode ? "********" : highlightMatch(claim.id || "", query)}
-                      </span>
-                      <span className="text-xs text-slate-600 dark:text-slate-300 font-medium">{privacyMode ? "********" : claim.visit_date}</span>
-                    </div>
-                    <div className="pl-4">
-                      <span className={`inline-flex max-w-full whitespace-normal break-words text-left text-xs font-bold rounded-md px-2 py-1 border leading-tight ${badgeClass}`} title={overallStatus.reason}>
-                        {overallStatus.label}
-                      </span>
-                    </div>
+                      {preview.score !== undefined && <span className="shrink-0 text-[10px] font-semibold text-slate-700 dark:text-slate-200" aria-label={`Automated score ${preview.score}`}>{preview.score}/100</span>}
+                  </div>
+                  <div className="ml-4 mt-0.5 flex min-w-0 items-center gap-2 text-[10px] leading-4 text-slate-700 dark:text-slate-300">
+                    <span className="shrink-0 font-semibold uppercase">{claim.department || "unassigned"}</span>
+                    <span aria-hidden="true">·</span>
+                    <span className="truncate font-mono">{privacyMode ? "********" : highlightMatch(claim.id || "", query)}</span>
                   </div>
                 </button>
               </li>

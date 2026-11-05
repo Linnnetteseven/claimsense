@@ -24,3 +24,6 @@ evidence_packs/
 
 # OS
 .DS_Store
+
+frontend/test-results/
+frontend/playwright-report/

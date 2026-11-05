@@ -1,13 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api/client.js";
 
-const CARD = "rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-5 shadow-sm";
+const CARD = "rounded-lg border border-slate-300 bg-white p-4 dark:border-slate-700 dark:bg-slate-950";
 const number = (value) => Number(value || 0).toLocaleString();
 const percent = (value) => `${Number(value || 0).toFixed(1)}%`;
-
-function SyntheticBadge() {
-  return <span className="inline-flex rounded-md border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/40 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-amber-700 dark:text-amber-300">Synthetic demo data</span>;
-}
 
 function StatusDonut({ rows }) {
   const values = rows.map((row) => Number(row.claim_count || 0));
@@ -70,9 +66,9 @@ export default function ManagementOverview({ onBack }) {
   if (loading) return <div className="flex-1 overflow-y-auto p-6"><div className="mx-auto max-w-6xl animate-pulse space-y-4"><div className="h-10 w-72 rounded bg-slate-200 dark:bg-slate-800" /><div className="grid gap-4 md:grid-cols-4">{[1, 2, 3, 4].map((key) => <div key={key} className="h-28 rounded-2xl bg-slate-200 dark:bg-slate-800" />)}</div></div></div>;
 
   if (error) return (
-    <section className="flex-1 overflow-y-auto p-6"><div className="mx-auto max-w-4xl space-y-5">
-      <div className="flex items-center justify-between"><button type="button" onClick={onBack} className="text-sm font-semibold text-teal-700 dark:text-teal-400">← Claims</button><SyntheticBadge /></div>
-      <div role="alert" className="rounded-2xl border border-amber-200 dark:border-amber-900 bg-white dark:bg-slate-950 p-6">
+    <section className="flex-1 overflow-y-auto p-4 sm:p-5"><div className="mx-auto max-w-5xl space-y-4">
+      <div className="flex items-center justify-between"><button type="button" onClick={onBack} className="rounded px-2 py-1 text-sm font-semibold text-teal-900 hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-700 dark:text-teal-300 dark:hover:bg-slate-800">← Claims</button></div>
+      <div role="alert" className="rounded-lg border border-slate-300 bg-white p-5 dark:border-slate-700 dark:bg-slate-950">
         <h1 className="text-xl font-bold text-slate-800 dark:text-slate-100">Management Overview</h1>
         <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">{error.includes("Analytics requires Oracle backend") ? "Analytics requires Oracle backend." : error}</p>
         <button type="button" onClick={load} className="mt-4 rounded-lg bg-teal-700 px-4 py-2 text-sm font-semibold text-white">Try again</button>
@@ -83,11 +79,11 @@ export default function ManagementOverview({ onBack }) {
   const kpis = data?.kpis || {};
   const ledger = data?.ledger_status || {};
   return (
-    <section className="flex-1 overflow-y-auto p-5 sm:p-7">
-      <div className="mx-auto max-w-6xl space-y-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div><button type="button" onClick={onBack} className="mb-2 text-xs font-semibold text-teal-700 dark:text-teal-400">← Claims</button><h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">Management Overview</h1><p className="mt-1 text-sm text-slate-500">Aggregate workflow indicators for the synthetic facility workload.</p></div>
-          <div className="flex items-center gap-3"><SyntheticBadge /><button type="button" onClick={load} className="rounded-lg border border-slate-300 dark:border-slate-700 px-3 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200">Refresh</button></div>
+    <section className="flex-1 overflow-y-auto p-4 sm:p-5">
+      <div className="mx-auto max-w-6xl space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+          <div><button type="button" onClick={onBack} className="mb-1 rounded px-2 py-1 text-xs font-semibold text-teal-900 hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-700 dark:text-teal-300 dark:hover:bg-slate-800">← Claims</button><h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">Management Overview</h1><p className="mt-1 text-sm text-slate-700 dark:text-slate-300">Aggregate workflow indicators for the synthetic facility workload.</p></div>
+          <button type="button" onClick={load} className="rounded-md border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-700 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800">Refresh</button>
         </div>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {[["Total claims", number(kpis.total_claims)], ["Ready", percent(kpis.ready_percent)], ["Rework rate", percent(kpis.rework_rate)], ["Ledger entries", number(kpis.ledger_entries)]].map(([label, value]) => <article key={label} className={CARD}><p className="text-xs font-bold uppercase tracking-wide text-slate-500">{label}</p><p className="mt-3 text-3xl font-bold text-slate-900 dark:text-slate-100">{value}</p></article>)}

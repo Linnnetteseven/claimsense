@@ -156,7 +156,7 @@ export default function OutcomeFeedbackTab({ claim, privacyMode = false }) {
           </label>
           {saveError && <p role="alert" className="md:col-span-2 text-xs text-red-600">{saveError}</p>}
           <div className="md:col-span-2">
-            <button type="submit" className="rounded-lg px-4 py-2 text-sm font-semibold text-white bg-teal-600 hover:bg-teal-700">Record outcome update</button>
+            <button type="submit" className="rounded-lg px-4 py-2 text-sm font-semibold text-white bg-teal-700 hover:bg-teal-800">Record outcome update</button>
           </div>
         </form>
       </section>

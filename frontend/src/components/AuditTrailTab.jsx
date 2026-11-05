@@ -120,7 +120,7 @@ export default function AuditTrailTab({ claimId, privacyMode = false }) {
       </section>
 
       <div className="bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-850 rounded-2xl p-5 shadow-sm">
-        <h3 className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest mb-4">
+        <h3 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-4">
             Claim lifecycle history
         </h3>
         {history.length === 0 && <p className="text-sm text-slate-500 dark:text-slate-400">No claim events have been recorded yet.</p>}
@@ -132,7 +132,7 @@ export default function AuditTrailTab({ claimId, privacyMode = false }) {
               className="border border-slate-100 dark:border-slate-850 rounded-xl p-4 bg-slate-50/50 dark:bg-slate-900/40"
             >
               <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-                <span className="text-xs font-mono text-slate-400 dark:text-slate-500">
+                <span className="text-xs font-mono text-slate-500 dark:text-slate-400">
                   Event #{block.seq ?? i + 1} · {eventLabel(block.type)}
                 </span>
                 {block.type === "validation" && <span className="text-sm font-bold text-slate-800 dark:text-slate-200">Automated score: {block.score}/100</span>}
@@ -150,19 +150,19 @@ export default function AuditTrailTab({ claimId, privacyMode = false }) {
               <details className="min-w-0">
                 <summary className="cursor-pointer text-xs font-semibold text-teal-700 dark:text-teal-400">View version and event fingerprints</summary>
                 <div className="grid grid-cols-1 gap-3 mt-3 text-xs font-mono text-slate-500 dark:text-slate-400">
-                  {block.version_fingerprint && <div className="min-w-0"><span className="block text-slate-400 dark:text-slate-500">Claim version fingerprint</span><code className="block mt-1 break-all">{block.version_fingerprint}</code></div>}
-                  {block.review_fingerprint && <div className="min-w-0"><span className="block text-slate-400 dark:text-slate-500">Department review fingerprint</span><code className="block mt-1 break-all">{block.review_fingerprint}</code></div>}
+                  {block.version_fingerprint && <div className="min-w-0"><span className="block text-slate-500 dark:text-slate-400">Claim version fingerprint</span><code className="block mt-1 break-all">{block.version_fingerprint}</code></div>}
+                  {block.review_fingerprint && <div className="min-w-0"><span className="block text-slate-500 dark:text-slate-400">Department review fingerprint</span><code className="block mt-1 break-all">{block.review_fingerprint}</code></div>}
                   <div className="min-w-0">
-                    <span className="block text-slate-400 dark:text-slate-500">Previous record hash</span>
+                    <span className="block text-slate-500 dark:text-slate-400">Previous record hash</span>
                     <code className="block mt-1 break-all">{block.prev_hash}</code>
                   </div>
                   <div className="min-w-0">
-                    <span className="block text-slate-400 dark:text-slate-500">This record hash</span>
+                    <span className="block text-slate-500 dark:text-slate-400">This record hash</span>
                     <code className="block mt-1 break-all">{block.hash}</code>
                   </div>
                 </div>
               </details>
-              <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-2">
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-2">
                 {block.timestamp}
               </p>
             </div>

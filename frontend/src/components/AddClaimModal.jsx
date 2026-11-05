@@ -318,7 +318,7 @@ export default function AddClaimModal({ onClose, onSubmit }) {
             <button
               type="submit"
               disabled={submitting}
-              className="flex-1 bg-teal-600 text-white py-2.5 rounded-lg text-sm font-medium hover:bg-teal-700 disabled:opacity-60 active:scale-95 transition-all"
+              className="flex-1 bg-teal-700 text-white py-2.5 rounded-lg text-sm font-medium hover:bg-teal-700 disabled:opacity-60 active:scale-95 transition-all"
             >
               {submitting ? "Adding…" : "Add claim to queue"}
             </button>

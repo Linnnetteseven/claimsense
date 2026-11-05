@@ -65,7 +65,7 @@ export default function ErrorCard({ result, explanation, fieldValue, onChange })
       {/* Inline correction input for fixable fields */}
       {canEdit && onChange && (
         <div className="pl-7 mt-3">
-          <label htmlFor={inputId} className="block text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-1.5">
+          <label htmlFor={inputId} className="block text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1.5">
             Correct field: <code className="bg-slate-100 dark:bg-slate-900 rounded px-1.5 py-0.5 text-slate-600 dark:text-slate-400 font-mono text-[9px] lowercase border dark:border-slate-800">{field.replace(/_/g, " ")}</code>
           </label>
           <input

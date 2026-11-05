@@ -6,7 +6,7 @@ export default function PrivacyToggle({ enabled, onToggle }) {
       type="button"
       onClick={onToggle}
       aria-pressed={enabled}
-      aria-label={`Claims queue privacy ${enabled ? "on" : "off"}`}
+      aria-label={`${enabled ? "Privacy on" : "Hide details"}: claims queue privacy ${enabled ? "on" : "off"}`}
       title="Masks patient and claim information across Hakiki screens"
       className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors ${
         enabled
