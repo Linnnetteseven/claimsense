@@ -41,7 +41,8 @@ export function useClaims() {
       setClaims(loadedClaims.length ? loadedClaims : [DEFAULT_MOCK_CLAIM]);
       return loadedClaims;
     } catch {
-      // In case of error (e.g. backend offline), fall back to our mock claim list
+      // Keep the historic offline fallback, but make the missing database visible.
+      setError("Database slow / unreachable. Showing the built-in offline demo claim; it is not synced with Oracle.");
       setClaims([DEFAULT_MOCK_CLAIM]);
       return [DEFAULT_MOCK_CLAIM];
     } finally {

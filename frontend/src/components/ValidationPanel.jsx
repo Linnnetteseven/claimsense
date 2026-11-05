@@ -222,7 +222,7 @@ export default function ValidationPanel({ claim, onValidationComplete, privacyMo
                     {privateValue(claim.patient_name)}
                 </h2>
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-2">
-                  {claim.is_synthetic && (
+                  {import.meta.env.VITE_SYNTHETIC_LABEL === "full" && claim.is_synthetic && (
                     <span className="text-[10px] font-bold uppercase tracking-wide text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 rounded px-1.5 py-0.5">
                       Synthetic demo data
                     </span>

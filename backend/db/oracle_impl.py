@@ -7,8 +7,9 @@ import json
 import logging
 import secrets
 
-from .connection import get_pool, health_check
-from .analytics import fetch_view_rows
+from .connection import get_pool, health_check, is_retryable_read_error
+from .analytics import fetch_view_rows, VIEW_QUERIES
+from . import response_cache
 
 logger = logging.getLogger(__name__)
 GENESIS_HASH = "0" * 16
@@ -86,6 +87,209 @@ class OracleRepository:
         with get_pool().acquire() as connection:
             with connection.cursor() as cursor:
                 return fetch_view_rows(cursor, view_name)
+
+    def fetch_analytics_status_signoffs(self) -> dict[str, list[dict]]:
+        """Read the two small categorical dashboard datasets in one round trip."""
+        query = """
+            SELECT 'claims_by_status' AS section_name, status AS item_key,
+                   TO_CHAR(claim_count) AS value_one, CAST(NULL AS VARCHAR2(100)) AS value_two
+            FROM v_claims_by_status
+            UNION ALL
+            SELECT 'signoff_progress', department, TO_CHAR(pending), TO_CHAR(signed_off)
+            FROM v_signoff_progress
+        """
+        result = {"claims_by_status": [], "signoff_progress": []}
+        with get_pool().acquire() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(query)
+                rows = cursor.fetchall()
+        for section, key, value_one, value_two in rows:
+            if section == "claims_by_status":
+                result[section].append({"status": key, "claim_count": int(value_one or 0)})
+            else:
+                result[section].append({"department": key, "pending": int(value_one or 0),
+                                        "signed_off": int(value_two or 0)})
+        return result
+
+    def fetch_analytics_overview(self) -> dict:
+        """Fetch all dashboard datasets in five round trips or fewer."""
+        combined_status_signoffs = """
+            SELECT 'claims_by_status' AS section_name, status AS item_key,
+                   TO_CHAR(claim_count) AS value_one, CAST(NULL AS VARCHAR2(100)) AS value_two
+            FROM v_claims_by_status
+            UNION ALL
+            SELECT 'signoff_progress', department, TO_CHAR(pending), TO_CHAR(signed_off)
+            FROM v_signoff_progress
+        """
+        views = (
+            "management_kpis", "score_by_department", "top_failed_rules",
+            "rework_trend_weekly",
+        )
+        with get_pool().acquire() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(combined_status_signoffs)
+                split_rows = cursor.fetchall()
+                cursor.execute(VIEW_QUERIES["management_kpis"])
+                kpi_columns = [column[0].lower() for column in cursor.description]
+                kpi_row = cursor.fetchone()
+                kpis = {key: (value.isoformat() if hasattr(value, "isoformat") else value)
+                        for key, value in zip(kpi_columns, kpi_row or ())}
+                results = {}
+                for view_name in views[1:]:
+                    cursor.execute(VIEW_QUERIES[view_name])
+                    columns = [column[0].lower() for column in cursor.description]
+                    results[view_name] = [
+                        {key: (value.isoformat() if hasattr(value, "isoformat") else value)
+                         for key, value in zip(columns, row)}
+                        for row in cursor.fetchall()
+                    ]
+
+        by_section = {"claims_by_status": [], "signoff_progress": []}
+        for section, key, value_one, value_two in split_rows:
+            if section == "claims_by_status":
+                by_section[section].append({"status": key, "claim_count": int(value_one or 0)})
+            else:
+                by_section[section].append({"department": key, "pending": int(value_one or 0),
+                                            "signed_off": int(value_two or 0)})
+        results.update(by_section)
+        results["kpis"] = kpis
+        results["ledger_status"] = {
+            "entries": kpis.get("ledger_entries", 0), "last_seq": kpis.get("last_seq", 0),
+            "last_anchor_at": kpis.get("last_anchor_at"), "last_anchor_tx": kpis.get("last_anchor_tx"),
+            "unanchored_entries": kpis.get("unanchored_entries", 0),
+        }
+        return results
+
+    def list_claim_queue(self, limit: int = 50) -> tuple[int, list[dict]]:
+        """Read only queue fields and current-version validation summaries."""
+        query = """
+            SELECT total_count, id, patient_name, facility_name, department,
+                   visit_date, is_synthetic, score, validation_status, error_count,
+                   warning_count, validation_payload
+            FROM (
+                SELECT COUNT(*) OVER() AS total_count,
+                       c.id,
+                       JSON_VALUE(c.payload, '$.patient_name' RETURNING VARCHAR2(255)) AS patient_name,
+                       JSON_VALUE(c.payload, '$.facility_name' RETURNING VARCHAR2(255)) AS facility_name,
+                       NVL(c.department, 'unassigned') AS department,
+                       JSON_VALUE(c.payload, '$.visit_date' RETURNING VARCHAR2(32)) AS visit_date,
+                       CASE WHEN JSON_VALUE(c.payload, '$.is_synthetic') = 'true' THEN 1 ELSE 0 END AS is_synthetic,
+                       vr.score,
+                       vr.status AS validation_status,
+                       NVL(vr.error_count, 0) AS error_count,
+                       NVL(vr.warning_count, 0) AS warning_count,
+                       CASE WHEN vr.id IS NULL THEN c.payload ELSE NULL END AS validation_payload
+                FROM claims c
+                LEFT JOIN (
+                    SELECT id, claim_id, version, score, status, error_count, warning_count,
+                           ROW_NUMBER() OVER (PARTITION BY claim_id ORDER BY created_at DESC, id DESC) AS rn
+                    FROM validation_runs
+                ) vr ON vr.claim_id = c.id AND vr.rn = 1 AND vr.version = c.current_version
+                ORDER BY c.created_at DESC, c.id DESC
+            )
+            WHERE ROWNUM <= :limit
+        """
+        with get_pool().acquire() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(query, {"limit": min(50, max(1, int(limit)))}, fetch_lobs=False)
+                rows = cursor.fetchall()
+        if not rows:
+            return 0, []
+        total = int(rows[0][0])
+        claims = []
+        for row in rows:
+            (_, claim_id, patient_name, facility_name, department, visit_date,
+             synthetic, score, status, errors, warnings, validation_payload) = row
+            preview = None
+            if score is not None:
+                color = "green" if status == "Ready for Submission" else "amber" if status == "Needs Review" else "red"
+                preview = {"score": int(score), "status": status, "color": color,
+                           "error_count": int(errors), "warning_count": int(warnings)}
+            claims.append({
+                "id": claim_id, "patient_name": patient_name,
+                "facility_name": facility_name, "department": department, "visit_date": visit_date,
+                "is_synthetic": bool(synthetic), "_preview": preview,
+                "_validation_payload": _load_json(validation_payload) if validation_payload else None,
+            })
+        return total, claims
+
+    def get_claim_audit(self, claim_id: str, claim: dict | None = None, limit: int = 50) -> dict | None:
+        """Fetch one claim's latest 50 events and current version in one SQL call."""
+        query = """
+            SELECT c.payload, cv.version, cv.version_fingerprint, cv.event_seq,
+                   l.seq, l.claim_ref, l.event_type, l.payload_hash, RTRIM(l.prev_hash),
+                   RTRIM(l.hash), l.chain_version,
+                   TO_CHAR(l.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+                   DBMS_LOB.SUBSTR(d.details_json, 4000, 1) AS details_json,
+                   DBMS_LOB.GETLENGTH(d.details_json) AS details_length
+            FROM claims c
+            LEFT JOIN claim_versions cv
+              ON cv.claim_id = c.id AND cv.version = c.current_version
+            LEFT JOIN (
+                SELECT * FROM (
+                    SELECT seq, claim_ref, event_type, payload_hash, prev_hash, hash,
+                           chain_version, created_at
+                    FROM audit_ledger
+                    WHERE claim_ref = (SELECT claim_ref FROM claims WHERE id = :claim_id)
+                    ORDER BY seq DESC
+                ) WHERE ROWNUM <= :limit
+            ) l ON 1 = 1
+            LEFT JOIN audit_event_details d ON d.event_seq = l.seq
+            WHERE c.id = :claim_id
+            ORDER BY l.seq DESC
+        """
+        rows = None
+        for attempt in (1, 2):
+            connection = None
+            try:
+                with get_pool().acquire() as connection:
+                    with connection.cursor() as cursor:
+                        cursor.execute(query, {"claim_id": claim_id, "limit": min(50, max(1, int(limit)))}, fetch_lobs=False)
+                        rows = cursor.fetchall()
+                if attempt == 2:
+                    logger.info("Oracle read retry succeeded operation=get_claim_audit claim_id=%s", claim_id)
+                break
+            except Exception as exc:
+                if connection is not None and is_retryable_read_error(exc):
+                    try:
+                        connection.drop()
+                    except Exception:
+                        pass
+                if attempt == 1 and is_retryable_read_error(exc):
+                    logger.info("Oracle connection dropped; retrying safe read operation=get_claim_audit claim_id=%s", claim_id)
+                    continue
+                raise
+        if not rows:
+            return None
+        stored_claim = _load_json(rows[0][0])
+        _, version, fingerprint, event_seq = rows[0][:4]
+        history = []
+        for row in rows:
+            (_, _, _, _, seq, claim_ref, event_type, payload_hash, prev_hash, digest,
+             chain_version, timestamp, details_json, details_length) = row
+            if seq is None:
+                continue
+            if details_length and int(details_length) > 4000:
+                raise ValueError(f"Audit event {seq} details_json exceeds 4000 characters")
+            details = _load_json(details_json) if details_json else {}
+            hash_input = details.get("hash_input")
+            if int(chain_version) == 4 and isinstance(hash_input, dict):
+                timestamp = hash_input.get("timestamp", timestamp)
+            history.append({
+                **details, "seq": int(seq), "claim_ref": claim_ref, "type": event_type,
+                "payload_hash": payload_hash, "prev_hash": prev_hash, "hash": digest,
+                "hash_version": int(chain_version), "timestamp": timestamp, "claim_id": claim_id,
+            })
+        history.reverse()
+        current_fingerprint = _claim_fingerprint(claim if claim is not None else stored_claim)
+        return {
+            "history": history,
+            "current_version": ({"status": "not_recorded"} if not fingerprint else {
+                "status": "matches" if current_fingerprint == fingerprint else "mismatch",
+                "version": int(version), "event_seq": event_seq,
+                "version_fingerprint": fingerprint,
+            }),
+        }
 
     def get_evidence_pack_data(self, claim_id: str) -> dict | None:
         """Return a synthetic-only, identifier-minimized evidence pack payload."""
@@ -246,6 +450,7 @@ class OracleRepository:
             with connection.cursor() as cursor:
                 event = self._append_cursor(connection, cursor, payload)
                 connection.commit()
+                response_cache.clear()
                 return event
 
     def append_ledger_events(self, payloads: list[dict], existing=None) -> list[dict]:
@@ -257,23 +462,32 @@ class OracleRepository:
                 for payload in payloads:
                     result.append(self._append_cursor(connection, cursor, payload))
                 connection.commit()
+                response_cache.clear()
             return result
 
     def all_ledger_records(self) -> list[dict]:
+        import time
+        started = time.perf_counter()
+        sql_calls = 0
         with get_pool().acquire() as connection:
             with connection.cursor() as cursor:
+                cursor.arraysize = 500
+                sql_calls += 1
                 cursor.execute(
                     """SELECT l.seq, l.claim_ref, l.event_type, l.payload_hash, RTRIM(l.prev_hash),
                               RTRIM(l.hash), l.chain_version,
                               TO_CHAR(l.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),
-                              d.details_json
+                              DBMS_LOB.SUBSTR(d.details_json, 4000, 1) AS details_json,
+                              DBMS_LOB.GETLENGTH(d.details_json) AS details_length
                        FROM audit_ledger l LEFT JOIN audit_event_details d ON d.event_seq = l.seq
                        ORDER BY l.seq""",
                     fetch_lobs=False,
                 )
                 rows = cursor.fetchall()
         records = []
-        for seq, claim_ref, event_type, payload_hash, prev_hash, digest, chain_version, timestamp, details in rows:
+        for seq, claim_ref, event_type, payload_hash, prev_hash, digest, chain_version, timestamp, details, details_length in rows:
+            if details_length and int(details_length) > 4000:
+                raise ValueError(f"Audit event {seq} details_json exceeds 4000 characters")
             record = _load_json(details) if details else {}
             hash_input = record.get("hash_input")
             record.update({
@@ -287,17 +501,49 @@ class OracleRepository:
                 # Anchor metadata is safe on-chain and needed by the Fuji UI.
                 record["anchored_tx"] = record.get("tx_hash")
             records.append(record)
+        logger.info("Oracle all_ledger_records rows=%d sql_queries=%d duration_ms=%.1f arraysize=500 fetch_lobs=false",
+                    len(records), sql_calls, (time.perf_counter() - started) * 1000)
         return records
 
     def get_ledger_for_claim(self, claim_id: str) -> list[dict]:
+        """Return only this claim's latest 50 events in one indexed query."""
+        query = """
+            SELECT seq, claim_ref, event_type, payload_hash, RTRIM(prev_hash), RTRIM(hash),
+                   chain_version,
+                   TO_CHAR(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+                   DBMS_LOB.SUBSTR(details_json, 4000, 1) AS details_json,
+                   DBMS_LOB.GETLENGTH(details_json) AS details_length
+            FROM (
+                SELECT l.seq, l.claim_ref, l.event_type, l.payload_hash, l.prev_hash, l.hash,
+                       l.chain_version, l.created_at,
+                       DBMS_LOB.SUBSTR(d.details_json, 4000, 1) AS details_json,
+                       DBMS_LOB.GETLENGTH(d.details_json) AS details_length
+                FROM claims c
+                JOIN audit_ledger l ON l.claim_ref = c.claim_ref
+                LEFT JOIN audit_event_details d ON d.event_seq = l.seq
+                WHERE c.id = :claim_id
+                ORDER BY l.seq DESC
+            )
+            WHERE ROWNUM <= 50
+            ORDER BY seq
+        """
         with get_pool().acquire() as connection:
             with connection.cursor() as cursor:
-                cursor.execute("SELECT claim_ref FROM claims WHERE id = :claim_id", {"claim_id": claim_id})
-                row = cursor.fetchone()
-        if not row:
-            return []
-        claim_ref = row[0]
-        return [{**record, "claim_id": claim_id} for record in self.all_ledger_records() if record.get("claim_ref") == claim_ref]
+                cursor.execute(query, {"claim_id": claim_id}, fetch_lobs=False)
+                rows = cursor.fetchall()
+        records = []
+        for row in rows:
+            seq, claim_ref, event_type, payload_hash, prev_hash, digest, version, timestamp, details_json, details_length = row
+            if details_length and int(details_length) > 4000:
+                raise ValueError(f"Audit event {seq} details_json exceeds 4000 characters")
+            details = _load_json(details_json) if details_json else {}
+            header = details.get("hash_input")
+            if int(version) == 4 and isinstance(header, dict):
+                timestamp = header.get("timestamp", timestamp)
+            records.append({**details, "seq": int(seq), "claim_ref": claim_ref, "type": event_type,
+                            "payload_hash": payload_hash, "prev_hash": prev_hash, "hash": digest,
+                            "hash_version": int(version), "timestamp": timestamp, "claim_id": claim_id})
+        return records
 
     def _select_claim(self, cursor, claim_id: str, for_update: bool = False):
         suffix = " FOR UPDATE" if for_update else ""
@@ -358,6 +604,7 @@ class OracleRepository:
                     rows = self.get_ledger_for_claim(str(cleaned.get("id") or ""))
                     return next((item for item in rows if item.get("type") == "claim_received"), None)
                 connection.commit()
+                response_cache.clear()
                 rows = self.get_ledger_for_claim(str(cleaned.get("id") or ""))
                 return next((item for item in rows if item.get("type") == "claim_received"), None)
 
@@ -366,12 +613,107 @@ class OracleRepository:
         return []
 
     def sync_claims(self, claims: list[dict]) -> list[dict]:
+        """Insert missing intake claims with three batch round trips, independent of N."""
+        incoming = [(_clean_claim(claim), claim.get("_created_at"))
+                    for claim in claims if str(claim.get("id") or "")]
+        if not incoming:
+            return []
+        id_binds = {f"id_{index}": claim["id"] for index, (claim, _) in enumerate(incoming)}
+        placeholders = ", ".join(f":id_{index}" for index in range(len(incoming)))
         with get_pool().acquire() as connection:
             with connection.cursor() as cursor:
-                for claim in claims:
-                    self._ensure_claim_cursor(connection, cursor, claim)
+                # Lock the singleton head first so concurrent sync requests cannot
+                # both decide the same intake IDs are missing and race to insert.
+                cursor.execute(
+                    "SELECT last_seq, RTRIM(last_hash) FROM audit_ledger_head WHERE singleton_id = 1 FOR UPDATE"
+                )
+                head = cursor.fetchone()
+                if not head:
+                    raise RuntimeError("Oracle audit_ledger_head is not initialized; apply backend/db/schema.sql")
+                cursor.execute(f"SELECT id FROM claims WHERE id IN ({placeholders})", id_binds)
+                existing_ids = {str(row[0]) for row in cursor.fetchall()}
+                missing = [(claim, created_at_value) for claim, created_at_value in incoming
+                           if str(claim["id"]) not in existing_ids]
+                if not missing:
+                    connection.rollback()
+                    return [claim for claim, _ in incoming]
+                seq = int(head[0])
+                previous = head[1]
+                batch = {"claims": [], "versions": [], "ledger": [], "details": []}
+                now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                for claim, created_at_value in missing:
+                    claim_id = str(claim["id"])
+                    claim_ref = secrets.token_hex(16)
+                    payload_text = _canonical(claim)
+                    fingerprint = _claim_fingerprint(claim)
+                    created_at, timestamp = _timestamp(created_at_value)
+                    seq += 1
+                    event_payload = {
+                        "type": "claim_received", "claim_id": claim_id, "version": 1,
+                        "version_fingerprint": fingerprint, "timestamp": timestamp or now,
+                    }
+                    payload_hash = hashlib.sha256(_canonical(event_payload).encode("utf-8")).hexdigest()
+                    header = {"seq": seq, "claim_ref": claim_ref, "event_type": "claim_received",
+                              "payload_hash": payload_hash, "timestamp": timestamp or now}
+                    digest = _hash_v4(previous, header)
+                    details = _safe_details(event_payload)
+                    details["hash_input"] = header
+                    batch["claims"].append({
+                        "id": claim_id, "claim_ref": claim_ref,
+                        "facility": claim.get("facility_name"), "department": claim.get("department"),
+                        "payload": payload_text, "status": claim.get("status"),
+                        "created_at": created_at.strftime("%Y-%m-%dT%H:%M:%S+00:00"),
+                    })
+                    batch["versions"].append({
+                        "claim_id": claim_id, "version": 1, "payload": payload_text,
+                        "created_by": "system", "fingerprint": fingerprint, "event_seq": seq,
+                    })
+                    batch["ledger"].append({
+                        "seq": seq, "claim_ref": claim_ref, "event_type": "claim_received",
+                        "payload_hash": payload_hash, "prev_hash": previous, "hash": digest,
+                        "created_at": created_at.strftime("%Y-%m-%dT%H:%M:%S+00:00"),
+                    })
+                    batch["details"].append({"seq": seq, "details_json": _canonical(details)})
+                    previous = digest
+
+                # One bound JSON document lets Oracle perform all array inserts and
+                # the head update in one network round trip after the two reads.
+                cursor.execute(
+                    """BEGIN
+                         INSERT INTO claims (id, claim_ref, facility, department, payload, status, current_version, created_at)
+                         SELECT id, claim_ref, facility, department, payload, status, 1,
+                                TO_TIMESTAMP_TZ(created_at, 'YYYY-MM-DD"T"HH24:MI:SSTZH:TZM')
+                         FROM JSON_TABLE(:batch_json, '$.claims[*]' COLUMNS (
+                           id VARCHAR2(128) PATH '$.id', claim_ref VARCHAR2(32) PATH '$.claim_ref',
+                           facility VARCHAR2(255) PATH '$.facility', department VARCHAR2(64) PATH '$.department',
+                           payload CLOB PATH '$.payload', status VARCHAR2(64) PATH '$.status',
+                           created_at VARCHAR2(40) PATH '$.created_at'));
+                         INSERT INTO claim_versions (claim_id, version, payload, created_by, version_fingerprint, event_seq)
+                         SELECT claim_id, version, payload, created_by, fingerprint, event_seq
+                         FROM JSON_TABLE(:batch_json, '$.versions[*]' COLUMNS (
+                           claim_id VARCHAR2(128) PATH '$.claim_id', version NUMBER PATH '$.version',
+                           payload CLOB PATH '$.payload', created_by VARCHAR2(120) PATH '$.created_by',
+                           fingerprint CHAR(64) PATH '$.fingerprint', event_seq NUMBER PATH '$.event_seq'));
+                         INSERT INTO audit_ledger (seq, claim_ref, event_type, payload_hash, prev_hash, hash, created_at, chain_version)
+                         SELECT seq, claim_ref, event_type, payload_hash, prev_hash, hash,
+                                TO_TIMESTAMP_TZ(created_at, 'YYYY-MM-DD"T"HH24:MI:SSTZH:TZM'), 4
+                         FROM JSON_TABLE(:batch_json, '$.ledger[*]' COLUMNS (
+                           seq NUMBER PATH '$.seq', claim_ref VARCHAR2(32) PATH '$.claim_ref',
+                           event_type VARCHAR2(64) PATH '$.event_type', payload_hash CHAR(64) PATH '$.payload_hash',
+                           prev_hash CHAR(64) PATH '$.prev_hash', hash CHAR(64) PATH '$.hash',
+                           created_at VARCHAR2(40) PATH '$.created_at'));
+                         INSERT INTO audit_event_details (event_seq, details_json)
+                         SELECT seq, details_json FROM JSON_TABLE(:batch_json, '$.details[*]' COLUMNS (
+                           seq NUMBER PATH '$.seq', details_json CLOB PATH '$.details_json'));
+                         UPDATE audit_ledger_head SET last_seq = :last_seq, last_hash = :last_hash
+                         WHERE singleton_id = 1;
+                       END;""",
+                    {"batch_json": json.dumps(batch, separators=(",", ":"), ensure_ascii=False),
+                     "last_seq": seq, "last_hash": previous},
+                )
                 connection.commit()
-        return self.list_claims()
+        response_cache.clear()
+        return [claim for claim, _ in incoming]
 
     def get_claim(self, claim_id: str) -> dict | None:
         with get_pool().acquire() as connection:
@@ -390,6 +732,7 @@ class OracleRepository:
             with connection.cursor() as cursor:
                 cleaned, _ = self._ensure_claim_cursor(connection, cursor, claim, created_by="claims_officer")
                 connection.commit()
+                response_cache.clear()
                 return cleaned
 
     def record_claim_correction(self, claim_id: str, previous: dict, updated: dict) -> dict | None:
@@ -437,6 +780,7 @@ class OracleRepository:
                      "created_at": corrected_at},
                 )
                 connection.commit()
+                response_cache.clear()
                 return event
 
     def record_validation(self, claim_id: str, claim: dict, result: dict) -> dict | None:
@@ -473,6 +817,7 @@ class OracleRepository:
                      "ledger_seq": event["seq"], "created_at": created_at},
                 )
                 connection.commit()
+                response_cache.clear()
                 return event
 
     def record_event(self, payload: dict) -> dict:
@@ -531,6 +876,7 @@ class OracleRepository:
                          "signed_at": signed_at, "review_json": _canonical(review)},
                     )
                 connection.commit()
+                response_cache.clear()
         return review
 
     def list_outcomes(self, claim_id: str | None = None) -> list[dict]:
@@ -568,6 +914,7 @@ class OracleRepository:
                      "recorded_at": recorded_at},
                 )
                 connection.commit()
+                response_cache.clear()
         return {**outcome, "ledgerSeq": event["seq"]}
 
     def import_legacy_records(self, records: list[dict], verify_records) -> dict:
@@ -645,6 +992,7 @@ class OracleRepository:
                     {"seq": copied_count, "hash": previous},
                 )
             connection.commit()
+            response_cache.clear()
         copied = self.all_ledger_records()
         previous = GENESIS_HASH
         copied_check = {"verified": True}

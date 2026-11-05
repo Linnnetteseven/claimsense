@@ -15,6 +15,8 @@ load_dotenv()
 
 
 import logging
+import asyncio
+from time import perf_counter
 from fastapi import Form, BackgroundTasks, Header
 from fastapi.responses import PlainTextResponse, FileResponse
 from ussd.handler import handle_ussd_session
@@ -31,7 +33,13 @@ from fhir.client import openimis
 from llm.explainer import explain_errors
 from audit import chain, anchor
 from db.factory import get_repository, is_oracle_active, configured_backend
-from db.connection import connection_mode as oracle_connection_mode
+from db.connection import (
+    connection_mode as oracle_connection_mode,
+    begin_sql_query_tracking,
+    finish_sql_query_tracking,
+    get_pool,
+)
+from db import response_cache
 from db.analytics import VIEW_QUERIES
 from evidence.packs import store_evidence_pack
 from db.select_ai import run_readonly_analytics_query, SelectAINotAvailable
@@ -62,6 +70,12 @@ async def lifespan(app: FastAPI):
     logger.info("Mode: %s", "MOCK" if config.use_mock else "LIVE")
     logger.info("LLM: %s", "enabled" if config.llm_enabled else "disabled — set GEMINI_API_KEY")
     logger.info("=" * 50)
+    if configured_backend() in {"oracle", "oracle_with_fallback"}:
+        try:
+            await asyncio.to_thread(get_pool)
+            await _warm_oracle_read_cache()
+        except Exception as exc:
+            logger.warning("Oracle startup warm-up unavailable (%s); app will continue", type(exc).__name__)
     yield
 
 
@@ -79,6 +93,27 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def log_request_metrics(request, call_next):
+    token = begin_sql_query_tracking()
+    started = perf_counter()
+    response = None
+    try:
+        response = await call_next(request)
+        return response
+    finally:
+        duration_ms = (perf_counter() - started) * 1000
+        sql_count = finish_sql_query_tracking(token)
+        route = request.scope.get("route")
+        path = getattr(route, "path", request.url.path)
+        status = response.status_code if response is not None else 500
+        logger.info("HTTP %s %s status=%s duration_ms=%.1f sql_queries=%d",
+                    request.method, path, status, duration_ms, sql_count)
+        if response is not None:
+            response.headers["X-SQL-Query-Count"] = str(sql_count)
+            response.headers["Server-Timing"] = f"app;dur={duration_ms:.1f}"
 
 
 @app.get("/health/db")
@@ -112,22 +147,79 @@ def _analytics_repository():
     return repository
 
 
+def _load_oracle_queue_base(repository):
+    """Prepare a bounded queue projection; never read claim payloads for validated rows."""
+    if config.use_mock:
+        repository.sync_claims(MOCK_CLAIMS)
+    total, claims = repository.list_claim_queue(limit=50)
+    for claim in claims:
+        payload = claim.pop("_validation_payload", None)
+        if payload is not None:
+            result = validate(payload)
+            claim["_preview"] = {
+                "score": result["score"], "status": result["status"], "color": result["color"],
+                "error_count": result["error_count"], "warning_count": result["warning_count"],
+            }
+    return {"total_count": total, "claims": claims}
+
+
+async def _oracle_queue_base(repository=None):
+    repository = repository or _analytics_repository()
+    cache_key = ("claims",)
+    cached = response_cache.get(cache_key)
+    if cached is not None:
+        return cached
+    data = await asyncio.to_thread(_load_oracle_queue_base, repository)
+    return response_cache.put(cache_key, data)
+
+
+async def _load_analytics_overview(repository):
+    """Run five independent aggregate reads concurrently, never scan the ledger."""
+    kpis, combined, scores, failures, trend = await asyncio.gather(
+        asyncio.to_thread(repository.fetch_analytics_view, "management_kpis"),
+        asyncio.to_thread(repository.fetch_analytics_status_signoffs),
+        asyncio.to_thread(repository.fetch_analytics_view, "score_by_department"),
+        asyncio.to_thread(repository.fetch_analytics_view, "top_failed_rules"),
+        asyncio.to_thread(repository.fetch_analytics_view, "rework_trend_weekly"),
+    )
+    kpi = kpis[0] if kpis else {}
+    ledger = {
+        "entries": kpi.get("ledger_entries", 0), "last_seq": kpi.get("last_seq", 0),
+        "last_anchor_at": kpi.get("last_anchor_at"), "last_anchor_tx": kpi.get("last_anchor_tx"),
+        "unanchored_entries": kpi.get("unanchored_entries", 0),
+    }
+    return {"available": True, "kpis": kpi,
+            "claims_by_status": combined["claims_by_status"],
+            "score_by_department": scores, "top_failed_rules": failures,
+            "rework_trend_weekly": trend, "ledger_status": ledger,
+            "signoff_progress": combined["signoff_progress"]}
+
+
+async def _oracle_analytics_overview(repository=None):
+    repository = repository or _analytics_repository()
+    cache_key = ("analytics", "overview")
+    cached = response_cache.get(cache_key)
+    if cached is not None:
+        return cached
+    data = await _load_analytics_overview(repository)
+    return response_cache.put(cache_key, data)
+
+
+async def _warm_oracle_read_cache():
+    repository = get_repository()
+    if not is_oracle_active(repository):
+        return
+    queue_data = await _oracle_queue_base(repository)
+    analytics_data = await _oracle_analytics_overview(repository)
+    logger.info("Oracle read cache warmed (claims=%d, analytics=yes)", len(queue_data["claims"]))
+
+
 @app.get("/analytics/overview")
 async def get_management_analytics():
     """Return aggregate metrics from Oracle views; no claim-level data is selected."""
     repository = _analytics_repository()
     try:
-        kpis = repository.fetch_analytics_view("management_kpis")
-        return {
-            "available": True,
-            "kpis": kpis[0] if kpis else {},
-            "claims_by_status": repository.fetch_analytics_view("claims_by_status"),
-            "score_by_department": repository.fetch_analytics_view("score_by_department"),
-            "top_failed_rules": repository.fetch_analytics_view("top_failed_rules"),
-            "rework_trend_weekly": repository.fetch_analytics_view("rework_trend_weekly"),
-            "ledger_status": (repository.fetch_analytics_view("ledger_status") or [{}])[0],
-            "signoff_progress": repository.fetch_analytics_view("signoff_progress"),
-        }
+        return await _oracle_analytics_overview(repository)
     except Exception as exc:
         logger.warning("Analytics views unavailable (%s)", type(exc).__name__)
         raise HTTPException(status_code=503, detail="Analytics views are unavailable; apply backend/db/views.sql as HAKIKI_APP") from None
@@ -141,7 +233,12 @@ async def get_management_analytics_view(view_name: str):
         raise HTTPException(status_code=404, detail="Analytics view not found")
     repository = _analytics_repository()
     try:
-        return {"items": repository.fetch_analytics_view(view_name)}
+        key = ("analytics", view_name)
+        cached = response_cache.get(key)
+        if cached is None:
+            cached = await asyncio.to_thread(repository.fetch_analytics_view, view_name)
+            response_cache.put(key, cached)
+        return {"items": cached}
     except Exception as exc:
         logger.warning("Analytics view read failed (%s)", type(exc).__name__)
         raise HTTPException(status_code=503, detail="Analytics view is unavailable; apply backend/db/views.sql as HAKIKI_APP") from None
@@ -259,6 +356,17 @@ def full_pipeline(claim: dict, record_audit: bool = True) -> dict:
 @app.get("/claims/{claim_id}/audit")
 async def get_claim_audit(claim_id: str):
     """Claim lifecycle events and comparison against the current saved version."""
+    repository = get_repository()
+    if is_oracle_active(repository):
+        try:
+            result = repository.get_claim_audit(claim_id, limit=50)
+            if result is None:
+                raise HTTPException(status_code=404, detail=f"Claim '{claim_id}' not found")
+            return {"claim_id": claim_id, **result}
+        except Exception as exc:
+            if isinstance(exc, HTTPException):
+                raise
+            raise _storage_unavailable(exc, "Audit history is unavailable") from None
     claim = get_claim_or_404(claim_id)
     try:
         chain.record_claim_received(claim)
@@ -306,15 +414,53 @@ async def list_claims(
     q: str = "",
     status: str = "all",
     page: int = 1,
-    page_size: int = 20,
+    page_size: int | None = None,
 ):
     """
     Returns claims with pre-scores. Supports:
       q         — search by patient name or claim ID (case-insensitive)
       status    — all | ready | review | error
       page      — page number (1-based)
-      page_size — claims per page (default 20)
+      page_size — claims per page (Oracle default 50, Redis default 20)
     """
+    repository = get_repository()
+    if is_oracle_active(repository):
+        if not config.use_mock:
+            raise HTTPException(status_code=503, detail="Oracle mode is restricted to synthetic demo claims; live openIMIS data is disabled")
+        try:
+            base = await _oracle_queue_base(repository)
+        except Exception as exc:
+            frames = traceback.extract_tb(exc.__traceback__)
+            location = f"{Path(frames[-1].filename).name}:{frames[-1].lineno}" if frames else "unknown"
+            logger.warning("Oracle queue read failed (%s at %s)", type(exc).__name__, location)
+            raise HTTPException(status_code=503, detail="Database slow / unreachable; Oracle claims could not be loaded") from None
+
+        claims = list(base["claims"])
+        if status == "ready":
+            claims = [claim for claim in claims if claim.get("_preview", {}).get("color") == "green"]
+        elif status == "review":
+            claims = [claim for claim in claims if claim.get("_preview", {}).get("color") == "amber"]
+        elif status == "error":
+            claims = [claim for claim in claims if claim.get("_preview", {}).get("color") == "red"]
+        if q.strip():
+            q_lower = q.strip().lower()
+            claims = [claim for claim in claims if any(
+                q_lower in str(claim.get(key) or "").lower()
+                for key in ("patient_name", "id", "facility_name")
+            )]
+        bounded_page_size = min(50, max(1, page_size or 50))
+        start = max(0, page - 1) * bounded_page_size
+        page_claims = claims[start:start + bounded_page_size]
+        return {
+            "count": len(claims), "total_count": base["total_count"],
+            "page": page, "page_size": bounded_page_size,
+            "total_pages": max(1, -(-min(base["total_count"], 50) // bounded_page_size)),
+            "claims": page_claims,
+        }
+
+    # Keep the pre-existing Redis default unchanged.
+    if page_size is None:
+        page_size = 20
     if config.use_mock:
         source_claims = [*MOCK_CLAIMS, *_session_claims]
     else:
@@ -328,29 +474,8 @@ async def list_claims(
             source_claims = [*MOCK_CLAIMS, *_session_claims]
 
     # Apply in-session corrections
-    repository = get_repository()
-    if is_oracle_active(repository):
-        if not config.use_mock:
-            raise HTTPException(status_code=503, detail="Oracle mode is restricted to synthetic demo claims; live openIMIS data is disabled")
-        try:
-            claims = repository.sync_claims(source_claims)
-        except Exception as exc:
-            frames = traceback.extract_tb(exc.__traceback__)
-            if frames:
-                frame = frames[-1]
-                logger.warning(
-                    "Oracle claim sync failed (%s at %s:%d in %s)",
-                    type(exc).__name__, Path(frame.filename).name, frame.lineno, frame.name,
-                )
-            else:
-                logger.warning("Oracle claim sync failed (%s)", type(exc).__name__)
-            raise HTTPException(status_code=503, detail="Oracle database is unavailable; try again or use oracle_with_fallback") from None
-        if not is_oracle_active(repository):
-            claims = [_session_corrections.get(c["id"], c) for c in source_claims]
-            chain.record_claims_received(claims)
-    else:
-        claims = [_session_corrections.get(c["id"], c) for c in source_claims]
-        chain.record_claims_received(claims)
+    claims = [_session_corrections.get(c["id"], c) for c in source_claims]
+    chain.record_claims_received(claims)
 
     # Score all claims
     scored = []
@@ -403,10 +528,11 @@ async def list_claims(
 @app.get("/claims/{claim_id}")
 async def get_claim(claim_id: str):
     claim = get_claim_or_404(claim_id)
-    try:
-        chain.record_claim_received(claim)
-    except Exception as exc:
-        raise _storage_unavailable(exc, "Claim intake could not be recorded") from None
+    if not is_oracle_active(get_repository()):
+        try:
+            chain.record_claim_received(claim)
+        except Exception as exc:
+            raise _storage_unavailable(exc, "Claim intake could not be recorded") from None
     return claim
 
 

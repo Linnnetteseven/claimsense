@@ -6,6 +6,9 @@ import AddClaimModal from "./components/AddClaimModal.jsx";
 import PrivacyToggle from "./components/PrivacyToggle.jsx";
 import ManagementOverview from "./components/ManagementOverview.jsx";
 import { useClaims } from "./hooks/useClaims.js";
+import { api } from "./api/client.js";
+
+const SHOW_PER_CLAIM_SYNTHETIC_LABELS = import.meta.env.VITE_SYNTHETIC_LABEL === "full";
 
 export default function App() {
   const [selectedClaim, setSelectedClaim] = useState(null);
@@ -54,9 +57,27 @@ export default function App() {
     localStorage.setItem("hakikiDemoRole", demoRole);
   }, [demoMode, demoRole]);
 
-  if (!selectedId && claims.length > 0) {
-    setSelectedId(claims[0].id);
-  }
+  useEffect(() => {
+    if (!selectedId && claims.length > 0) {
+      setSelectedId(claims[0].id);
+      setSelectedClaim(claims[0]);
+    }
+  }, [claims, selectedId]);
+
+  // Oracle queue rows contain only summary fields; fetch the complete claim
+  // only when an officer selects it for the detailed workflow.
+  useEffect(() => {
+    if (!selectedId) return undefined;
+    let currentSelection = true;
+    api.getClaim(selectedId)
+      .then((fullClaim) => {
+        if (currentSelection) {
+          setSelectedClaim((current) => current?.id === selectedId ? { ...current, ...fullClaim } : current);
+        }
+      })
+      .catch(() => {});
+    return () => { currentSelection = false; };
+  }, [selectedId]);
 
   async function handleAddClaim(claimData) {
     const created = await addClaim(claimData);
@@ -123,6 +144,11 @@ export default function App() {
               </button>
             </div>
           </div>
+          {!SHOW_PER_CLAIM_SYNTHETIC_LABELS && (
+            <span className="inline-flex w-fit items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] font-semibold text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
+              Demo environment: synthetic data
+            </span>
+          )}
           <PrivacyToggle enabled={privacyMode} onToggle={() => setPrivacyMode((enabled) => !enabled)} />
           <button
             type="button"
@@ -176,8 +202,9 @@ export default function App() {
         </div>
 
         {error && (
-          <div role="alert" className="mx-4 my-2 text-xs text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-950/20 border border-red-100 dark:border-red-900/40 rounded-lg p-3">
-            Failed to load: {error}
+          <div role="alert" className="mx-3 my-2 text-xs text-amber-900 dark:text-amber-200 bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 rounded-lg p-3">
+            <p className="font-bold">Database slow / unreachable</p>
+            <p className="mt-1">{error}</p>
           </div>
         )}
 

@@ -1,4 +1,5 @@
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8001";
+const auditRequests = new Map();
 
 async function request(path, options = {}) {
   const res = await fetch(`${BASE_URL}${path}`, {
@@ -30,7 +31,39 @@ export const api = {
       method: "POST",
       body: JSON.stringify(correctedData),
     }),
-  getClaimAudit: (id) => request(`/claims/${id}/audit`),
+  getClaimAudit: (id, { signal } = {}) => {
+    let entry = auditRequests.get(id);
+    if (!entry) {
+      const controller = new AbortController();
+      entry = { controller, subscribers: 0, settled: false };
+      entry.promise = request(`/claims/${id}/audit`, { signal: controller.signal })
+        .finally(() => {
+          entry.settled = true;
+          if (auditRequests.get(id) === entry) auditRequests.delete(id);
+        });
+      auditRequests.set(id, entry);
+    }
+    entry.subscribers += 1;
+    return new Promise((resolve, reject) => {
+      let released = false;
+      const release = () => {
+        if (released) return;
+        released = true;
+        entry.subscribers -= 1;
+        if (!entry.settled && entry.subscribers === 0) entry.controller.abort();
+      };
+      const onAbort = () => {
+        release();
+        reject(new DOMException("Audit request aborted", "AbortError"));
+      };
+      if (signal?.aborted) return onAbort();
+      signal?.addEventListener("abort", onAbort, { once: true });
+      entry.promise.then(resolve, reject).finally(() => {
+        signal?.removeEventListener("abort", onAbort);
+        release();
+      });
+    });
+  },
   recordDepartmentReview: (id, event) =>
     request(`/claims/${id}/department-review`, { method: "POST", body: JSON.stringify(event) }),
   getDepartmentReview: (id, department) =>

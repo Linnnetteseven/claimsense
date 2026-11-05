@@ -14,7 +14,10 @@ class FakeOracleAnalyticsRepository:
 
     def fetch_analytics_view(self, name):
         sample = {
-            "management_kpis": [{"total_claims": 4, "ready_percent": 50}],
+            "management_kpis": [{"total_claims": 4, "ready_percent": 50,
+                                 "ledger_entries": 12, "last_seq": 12,
+                                 "last_anchor_at": None, "last_anchor_tx": None,
+                                 "unanchored_entries": 12}],
             "claims_by_status": [{"status": "Ready for Submission", "claim_count": 2}],
             "score_by_department": [{"department": "laboratory", "avg_score": 90, "claims": 2}],
             "top_failed_rules": [], "rework_trend_weekly": [],
@@ -23,8 +26,16 @@ class FakeOracleAnalyticsRepository:
         }
         return sample[name]
 
+    def fetch_analytics_status_signoffs(self):
+        return {
+            "claims_by_status": [{"status": "Ready for Submission", "claim_count": 2}],
+            "signoff_progress": [],
+        }
+
 
 def test_management_analytics_endpoint_reads_only_view_results(monkeypatch):
+    from db import response_cache
+    response_cache.clear()
     monkeypatch.setattr(main, "get_repository", lambda: FakeOracleAnalyticsRepository())
 
     response = TestClient(main.app).get("/analytics/overview")
