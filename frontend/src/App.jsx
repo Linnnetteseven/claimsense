@@ -14,13 +14,14 @@ export default function App() {
   const [selectedClaim, setSelectedClaim] = useState(null);
   const [counts, setCounts] = useState({ total: 0, ready: 0, review: 0, errors: 0 });
 
-  const { claims, loading, error, reload, patchPreview, addClaim } = useClaims();
+  const { claims, loading, error, offline, savedAt, reload, patchPreview, addClaim } = useClaims();
   const [view, setView] = useState("landing");
   const [selectedId, setSelectedId] = useState(null);
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [privacyMode, setPrivacyMode] = useState(() => localStorage.getItem("presentationPrivacy") === "on");
   const [demoMode, setDemoMode] = useState(() => localStorage.getItem("hakikiDemoMode") === "on");
   const [demoRole, setDemoRole] = useState(() => localStorage.getItem("hakikiDemoRole") || "Lab");
+  const [databaseNoticeDismissed, setDatabaseNoticeDismissed] = useState(false);
 
   function handleValidationComplete(claimId, validationResult, updatedClaim) {
     patchPreview(claimId, validationResult);
@@ -201,10 +202,18 @@ export default function App() {
           </button>
         </div>
 
-        {error && (
-          <div role="alert" className="mx-3 my-2 text-xs text-amber-900 dark:text-amber-200 bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 rounded-lg p-3">
-            <p className="font-bold">Database slow / unreachable</p>
-            <p className="mt-1">{error}</p>
+        {error && !databaseNoticeDismissed && (
+          <div role="alert" className="mx-3 my-2 text-xs text-amber-950 dark:text-amber-100 bg-amber-50 dark:bg-amber-950/50 border border-amber-500 dark:border-amber-700 rounded-lg p-3">
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <p className="font-bold">{offline ? "Offline: showing saved claims" : "Database slow / unreachable"}</p>
+                <p className="mt-1">{offline && savedAt ? `Offline: showing data saved at ${new Date(savedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.` : error}</p>
+              </div>
+              <button type="button" className="shrink-0 rounded px-1 text-sm font-bold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2" aria-label="Dismiss database notice" onClick={() => setDatabaseNoticeDismissed(true)}>×</button>
+            </div>
+            <button type="button" onClick={() => { setDatabaseNoticeDismissed(false); void reload(); }} disabled={loading} className="mt-2 rounded-md border border-amber-700 px-2.5 py-1 font-semibold text-amber-950 hover:bg-amber-100 disabled:opacity-60 dark:border-amber-500 dark:text-amber-100 dark:hover:bg-amber-900/70">
+              {loading ? "Retrying…" : "Retry now"}
+            </button>
           </div>
         )}
 

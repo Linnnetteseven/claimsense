@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import secrets
+from functools import wraps
 
 from .connection import get_pool, health_check, is_retryable_read_error
 from .analytics import fetch_view_rows, VIEW_QUERIES
@@ -13,6 +14,24 @@ from . import response_cache
 
 logger = logging.getLogger(__name__)
 GENESIS_HASH = "0" * 16
+
+
+def _retry_safe_read(function):
+    """Retry a read once after a dropped Oracle connection; never wrap writes."""
+    @wraps(function)
+    def wrapped(self, *args, **kwargs):
+        for attempt in (1, 2):
+            try:
+                result = function(self, *args, **kwargs)
+                if attempt == 2:
+                    logger.info("Oracle safe read recovered operation=%s", function.__name__)
+                return result
+            except Exception as exc:
+                if attempt == 1 and is_retryable_read_error(exc):
+                    logger.info("Oracle connection dropped; retrying safe read operation=%s", function.__name__)
+                    continue
+                raise
+    return wrapped
 
 
 def _canonical(value: dict) -> str:
@@ -82,12 +101,14 @@ class OracleRepository:
     def health(self) -> bool:
         return health_check()
 
+    @_retry_safe_read
     def fetch_analytics_view(self, view_name: str) -> list[dict]:
         """Read an aggregate analytics view using a fixed SELECT allowlist."""
         with get_pool().acquire() as connection:
             with connection.cursor() as cursor:
                 return fetch_view_rows(cursor, view_name)
 
+    @_retry_safe_read
     def fetch_analytics_status_signoffs(self) -> dict[str, list[dict]]:
         """Read the two small categorical dashboard datasets in one round trip."""
         query = """
@@ -111,6 +132,7 @@ class OracleRepository:
                                         "signed_off": int(value_two or 0)})
         return result
 
+    @_retry_safe_read
     def fetch_analytics_overview(self) -> dict:
         """Fetch all dashboard datasets in five round trips or fewer."""
         combined_status_signoffs = """
@@ -160,6 +182,7 @@ class OracleRepository:
         }
         return results
 
+    @_retry_safe_read
     def list_claim_queue(self, limit: int = 50) -> tuple[int, list[dict]]:
         """Read only queue fields and current-version validation summaries."""
         query = """
@@ -291,6 +314,7 @@ class OracleRepository:
             }),
         }
 
+    @_retry_safe_read
     def get_evidence_pack_data(self, claim_id: str) -> dict | None:
         """Return a synthetic-only, identifier-minimized evidence pack payload."""
         with get_pool().acquire() as connection:
@@ -465,6 +489,7 @@ class OracleRepository:
                 response_cache.clear()
             return result
 
+    @_retry_safe_read
     def all_ledger_records(self) -> list[dict]:
         import time
         started = time.perf_counter()
@@ -505,6 +530,7 @@ class OracleRepository:
                     len(records), sql_calls, (time.perf_counter() - started) * 1000)
         return records
 
+    @_retry_safe_read
     def get_ledger_for_claim(self, claim_id: str) -> list[dict]:
         """Return only this claim's latest 50 events in one indexed query."""
         query = """
@@ -715,12 +741,14 @@ class OracleRepository:
         response_cache.clear()
         return [claim for claim, _ in incoming]
 
+    @_retry_safe_read
     def get_claim(self, claim_id: str) -> dict | None:
         with get_pool().acquire() as connection:
             with connection.cursor() as cursor:
                 selected = self._select_claim(cursor, claim_id)
                 return selected[1] if selected else None
 
+    @_retry_safe_read
     def list_claims(self) -> list[dict]:
         with get_pool().acquire() as connection:
             with connection.cursor() as cursor:
@@ -823,6 +851,7 @@ class OracleRepository:
     def record_event(self, payload: dict) -> dict:
         return self.append_ledger_event(payload)
 
+    @_retry_safe_read
     def verify_current_claim_version(self, claim_id: str, claim: dict) -> dict:
         with get_pool().acquire() as connection:
             with connection.cursor() as cursor:
@@ -838,6 +867,7 @@ class OracleRepository:
         return {"status": "matches" if fingerprint == row[1] else "mismatch",
                 "version": int(row[0]), "event_seq": row[2], "version_fingerprint": row[1]}
 
+    @_retry_safe_read
     def get_department_review(self, claim_id: str, department: str) -> dict | None:
         with get_pool().acquire() as connection:
             with connection.cursor() as cursor:
@@ -879,6 +909,7 @@ class OracleRepository:
                 response_cache.clear()
         return review
 
+    @_retry_safe_read
     def list_outcomes(self, claim_id: str | None = None) -> list[dict]:
         query = "SELECT id, claim_id, department, outcome, reason, note, recorded_at FROM claim_outcomes"
         params = {}

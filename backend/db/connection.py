@@ -47,8 +47,17 @@ def is_retryable_read_error(exc: Exception) -> bool:
 
 
 class _TrackedCursor:
-    def __init__(self, cursor: Any):
+    def __init__(self, cursor: Any, connection: Any):
         object.__setattr__(self, "_cursor", cursor)
+        object.__setattr__(self, "_connection", connection)
+
+    def _call(self, name, *args, **kwargs):
+        try:
+            return getattr(self._cursor, name)(*args, **kwargs)
+        except Exception as exc:
+            if is_retryable_read_error(exc):
+                self._connection.drop()
+            raise
 
     def __setattr__(self, name, value):
         if name == "_cursor":
@@ -58,11 +67,20 @@ class _TrackedCursor:
 
     def execute(self, *args, **kwargs):
         _count_sql_call()
-        return self._cursor.execute(*args, **kwargs)
+        return self._call("execute", *args, **kwargs)
 
     def executemany(self, *args, **kwargs):
         _count_sql_call()
-        return self._cursor.executemany(*args, **kwargs)
+        return self._call("executemany", *args, **kwargs)
+
+    def fetchone(self):
+        return self._call("fetchone")
+
+    def fetchall(self):
+        return self._call("fetchall")
+
+    def fetchmany(self, *args, **kwargs):
+        return self._call("fetchmany", *args, **kwargs)
 
     def __enter__(self):
         self._cursor.__enter__()
@@ -83,7 +101,7 @@ class _TrackedConnection:
         self._connection.call_timeout = 30000
 
     def cursor(self, *args, **kwargs):
-        return _TrackedCursor(self._connection.cursor(*args, **kwargs))
+        return _TrackedCursor(self._connection.cursor(*args, **kwargs), self)
 
     def drop(self):
         """Discard a broken pooled connection instead of returning it idle."""

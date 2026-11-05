@@ -17,7 +17,10 @@ def _configure(monkeypatch, tmp_path, wallet_dir=""):
     monkeypatch.setitem(
         sys.modules,
         "oracledb",
-        SimpleNamespace(create_pool=lambda **kwargs: options.update(kwargs) or object()),
+        SimpleNamespace(
+            POOL_GETMODE_TIMEDWAIT=1,
+            create_pool=lambda **kwargs: options.update(kwargs) or object(),
+        ),
     )
     monkeypatch.setenv("ORACLE_USER", "HAKIKI_APP")
     monkeypatch.setenv("ORACLE_PASSWORD", "test-password")

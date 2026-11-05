@@ -15,11 +15,11 @@ async function request(path, options = {}) {
 
 export const api = {
   // Supports q (search), status (all|ready|review|error), page, page_size
-  getClaims: (params = {}) => {
+  getClaims: (params = {}, options = {}) => {
     const qs = new URLSearchParams(
       Object.entries(params).filter(([, v]) => v !== "" && v !== undefined)
     ).toString();
-    return request(`/claims${qs ? `?${qs}` : ""}`);
+    return request(`/claims${qs ? `?${qs}` : ""}`, options);
   },
   getClaim: (id) => request(`/claims/${id}`),
   createClaim: (claimData) => request("/claims", { method: "POST", body: JSON.stringify(claimData) }),
