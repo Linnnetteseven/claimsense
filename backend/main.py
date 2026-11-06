@@ -642,8 +642,10 @@ async def create_claim(claim: dict):
     except Exception as exc:
         logger.warning("Claim creation failed (%s)", type(exc).__name__)
         raise HTTPException(status_code=503, detail="Claim could not be saved to the selected database") from None
-    result = validate(created)
-    return {"claim": created, "_preview": {"score": result["score"], "status": result["status"], "color": result["color"], "error_count": result["error_count"], "warning_count": result["warning_count"]}}
+    result = full_pipeline(created)
+    if result.get("lifecycle"):
+        created["_lifecycle"] = result["lifecycle"]
+    return {"claim": created, "_preview": {"score": result["score"], "status": result["status"], "color": result["color"], "error_count": result["error_count"], "warning_count": result["warning_count"]}, "validation": result}
 
 
 @app.post("/claims/{claim_id}/validate")

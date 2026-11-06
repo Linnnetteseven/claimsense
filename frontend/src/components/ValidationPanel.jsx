@@ -463,14 +463,14 @@ export default function ValidationPanel({ claim, onValidationComplete, onLifecyc
               {!isSubmitted && state === "idle" && (
                 <div className="order-1 bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-850 rounded-2xl p-6 text-center shadow-sm">
                   <p className="text-slate-500 dark:text-slate-300 text-sm mb-4 font-medium">
-                    This claim needs validation against SHA pre-submission policies.
+                    Hakiki checks each claim when it is received. Re-run the checks after reviewing the saved version.
                   </p>
                   <button
                     type="button"
                     onClick={validate}
-                    className="bg-teal-700 text-white px-6 py-2.5 rounded-xl text-sm font-semibold hover:bg-teal-800 active:scale-95 transition-all shadow-sm"
+                    className="border border-slate-300 bg-white px-5 py-2 rounded-lg text-sm font-semibold text-slate-800 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:hover:bg-slate-900"
                   >
-                    Validate Claim
+                    Re-run checks
                   </button>
                 </div>
               )}
@@ -584,8 +584,8 @@ export default function ValidationPanel({ claim, onValidationComplete, onLifecyc
                     )}
 
                     {isStale && !hasEdits && !isSubmitted && (
-                      <button type="button" onClick={validate} disabled={state === "loading"} className="flex-1 rounded-xl bg-teal-700 py-3 text-sm font-semibold text-white disabled:opacity-60">
-                        {state === "loading" ? "Revalidating…" : "Revalidate current claim"}
+                      <button type="button" onClick={validate} disabled={state === "loading"} className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-800 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100">
+                        {state === "loading" ? "Re-running checks…" : "Re-run checks"}
                       </button>
                     )}
 
