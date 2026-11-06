@@ -6,6 +6,7 @@ load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 class _Config:
     DB_BACKEND: str = os.getenv("DB_BACKEND", "redis").strip().lower() or "redis"
+    DEPARTMENTS_ENABLED: bool = os.getenv("DEPARTMENTS_ENABLED", "true").strip().lower() != "false"
     OPENIMIS_URL: str = os.getenv("OPENIMIS_URL", "https://localhost")
     OPENIMIS_TOKEN: str = os.getenv("OPENIMIS_TOKEN", "")
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")

@@ -3,7 +3,7 @@ import PropTypes from "prop-types";
 import ScoreGauge from "./ScoreGauge.jsx";
 import StatusBadge from "./StatusBadge.jsx";
 import ErrorCard from "./ErrorCard.jsx";
-import { CheckIcon, SpinnerIcon } from "./icons.jsx";
+import { SpinnerIcon } from "./icons.jsx";
 import { useClaimValidation } from "../hooks/useClaimValidation.js";
 import AuditTrailTab from "./AuditTrailTab.jsx";
 import DeptGuideTab from "./DeptGuideTab.jsx";
@@ -28,7 +28,15 @@ const DEPARTMENT_RULE_IDS = {
  * Main right workspace: patient profile header, claim checks, structured details and department workflow,
  * status timeline on the right edge, document upload/scan simulation, and action buttons.
  */
-export default function ValidationPanel({ claim, onValidationComplete, privacyMode = false }) {
+export default function ValidationPanel({ claim, onValidationComplete, onLifecycleChange, onLocalEdit, privacyMode = false, departmentsEnabled = true }) {
+  const [lifecycle, setLifecycle] = useState(() => claim?._lifecycle || {});
+  const [correctionReason, setCorrectionReason] = useState("");
+  const [correctionMode, setCorrectionMode] = useState(false);
+  const [correctionBusy, setCorrectionBusy] = useState(false);
+  const [recheckBusy, setRecheckBusy] = useState(false);
+  const [recheckResult, setRecheckResult] = useState(null);
+  const [outcomeSaved, setOutcomeSaved] = useState(null);
+  const [lifecycleError, setLifecycleError] = useState("");
   const [departmentReview, setDepartmentReview] = useState(() => (
     claim ? readDepartmentReview(claim.id, claim.department) : null
   ));
@@ -49,7 +57,10 @@ export default function ValidationPanel({ claim, onValidationComplete, privacyMo
     revalidateWithEdits,
     submit,
     reset,
-  } = useClaimValidation(claim, onValidationComplete);
+  } = useClaimValidation(claim, onValidationComplete, onLifecycleChange);
+
+  const isSubmitted = String(lifecycle.status || "").toLowerCase() === "submitted" && !correctionMode;
+  const isStale = String(lifecycle.status || "").toLowerCase() === "needs_revalidation";
 
   useEffect(() => {
     console.log("ValidationPanel - Current State:", state);
@@ -61,23 +72,47 @@ export default function ValidationPanel({ claim, onValidationComplete, privacyMo
   }, [claim]);
 
   useEffect(() => {
+    if (validation?.lifecycle) setLifecycle(validation.lifecycle);
+  }, [validation?.lifecycle]);
+
+  useEffect(() => {
+    setLifecycle(claim?._lifecycle || {});
+    setCorrectionMode(false);
+    setCorrectionReason("");
+    setRecheckResult(null);
+  }, [claim?.id, claim?._lifecycle]);
+
+  useEffect(() => {
     const refreshDepartmentReview = (event) => {
       const { claimId, department: reviewDepartment } = event.detail || {};
       if (claimId === claim?.id && reviewDepartment === (claim?.department || "").toLowerCase()) {
         setDepartmentReview(readDepartmentReview(claim.id, claim.department));
+        if (String(lifecycle.status || "").toLowerCase() !== "submitted") {
+          setLifecycle((current) => ({ ...current, status: "needs_revalidation" }));
+          onLocalEdit?.(claim.id);
+        }
       }
     };
     window.addEventListener(DEPARTMENT_REVIEW_UPDATED, refreshDepartmentReview);
     return () => window.removeEventListener(DEPARTMENT_REVIEW_UPDATED, refreshDepartmentReview);
-  }, [claim]);
+  }, [claim, lifecycle.status, onLocalEdit]);
 
   const [activeTab, setActiveTab] = useState("Checks");
   const overallStatus = useMemo(() => getOverallStatus(
     { ...(validation || claim?._preview || {}), department: claim?.department },
     departmentReview,
   ), [claim, validation, departmentReview]);
+  const displayedStatus = (hasEdits || isStale) && !isSubmitted
+    ? { status: "amber", label: "Needs revalidation", reason: "Unsaved edits must be validated before submission." }
+    : isSubmitted
+      ? { status: "green", label: "Submitted, locked", reason: "This submitted version is locked." }
+      : overallStatus;
+  const correctionAvailable = ["returned", "rejected"].includes(
+    String(outcomeSaved?.outcome || lifecycle.latest_outcome || "").toLowerCase(),
+  ) || Boolean(correctionReason.trim());
   const overallChecks = validation?.results?.filter((result) => OVERALL_RULE_IDS.has(result.rule_id)) || [];
   const departmentChecks = validation?.results?.filter((result) => (DEPARTMENT_RULE_IDS[claim?.department] || []).includes(result.rule_id)) || [];
+  const tabs = departmentsEnabled ? ["Checks", "Details", "Departments", "Audit", "Outcome"] : ["Checks", "Details", "Audit", "Outcome"];
 
   const handleOfficerReview = async () => {
     if (!officerName.trim() || hasEdits) return;
@@ -97,13 +132,60 @@ export default function ValidationPanel({ claim, onValidationComplete, privacyMo
   };
 
   const handleEditField = (field, value) => {
+    if (isSubmitted) return;
     setOfficerReviewState("idle");
     editField(field, value);
+    onLocalEdit?.(claim.id);
   };
 
   const handleRevalidate = () => {
+    if (isSubmitted) return;
     setOfficerReviewState("idle");
     return revalidateWithEdits();
+  };
+
+  const handleReadOnlyRecheck = async () => {
+    setRecheckBusy(true);
+    setLifecycleError("");
+    try {
+      const response = await api.recheckClaim(claim.id);
+      setRecheckResult(response.validation);
+    } catch (recheckError) {
+      setLifecycleError(recheckError.message || "Read-only re-check failed.");
+    } finally {
+      setRecheckBusy(false);
+    }
+  };
+
+  const handleCreateCorrection = async () => {
+    setCorrectionBusy(true);
+    setLifecycleError("");
+    try {
+      const response = await api.startCorrection(claim.id, correctionReason);
+      setLifecycle(response.lifecycle || response.correction);
+      setCorrectionMode(true);
+      setCorrectionReason("");
+      setRecheckResult(null);
+      reset();
+      onLifecycleChange?.(claim.id, response.lifecycle || response.correction, response.correction?.claim);
+    } catch (correctionError) {
+      setLifecycleError(correctionError.message || "Could not create a correction version.");
+    } finally {
+      setCorrectionBusy(false);
+    }
+  };
+
+  const handleOutcomeSaved = (record) => {
+    setOutcomeSaved(record);
+    const normalized = String(record?.outcome || "").toLowerCase();
+    if (["returned", "rejected"].includes(normalized)) {
+      setLifecycle((current) => ({ ...current, latest_outcome: normalized, latest_outcome_reason: record.reasonCategory }));
+    }
+  };
+
+  const handleSubmit = async () => {
+    const result = await submit();
+    if (result?.lifecycle) setLifecycle(result.lifecycle);
   };
 
   // Document scan simulation state
@@ -163,48 +245,8 @@ export default function ValidationPanel({ claim, onValidationComplete, privacyMo
     activeStep = 1;
   } else if (state === "results") {
     activeStep = validation?.error_count > 0 ? 2 : 3;
-  } else if (state === "submitted" || state === "submitting") {
+  } else if (isSubmitted || state === "submitted" || state === "submitting") {
     activeStep = 3;
-  }
-
-  if (state === "submitted" && submitResult) {
-    return (
-      <div className="flex-1 bg-slate-50 dark:bg-slate-900 p-8 overflow-y-auto">
-        <div className="max-w-3xl mx-auto bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-850 rounded-2xl p-8 shadow-sm text-center">
-          <div className="w-16 h-16 rounded-full bg-emerald-100 dark:bg-emerald-950/20 flex items-center justify-center mx-auto mb-5">
-            <CheckIcon className="w-8 h-8 text-emerald-600 dark:text-emerald-400" />
-          </div>
-          <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Claim Successfully Submitted</h2>
-          <p className="text-slate-500 dark:text-slate-400 text-sm mt-2 max-w-md mx-auto">
-            {submitResult.mode === "mock"
-              ? "Demo submission simulated. No claim was sent to a live openIMIS service."
-              : "The claim was sent through the configured openIMIS connection."}
-          </p>
-
-          <div className="my-6 p-4 bg-slate-50 dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800 rounded-xl max-w-sm mx-auto flex items-center justify-between">
-            <span className="text-xs text-slate-500 dark:text-slate-400 font-semibold uppercase tracking-wider">Final Adjudication Score</span>
-            <span className="text-lg font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/30 px-3 py-1 rounded-lg border border-emerald-100 dark:border-emerald-900/40">
-              {submitResult.score}/100
-            </span>
-          </div>
-
-          <div className="w-full text-left bg-slate-900 dark:bg-slate-950 border border-slate-800 dark:border-slate-850 rounded-xl p-5 overflow-hidden shadow-inner mb-6">
-            <h3 className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-3">FHIR R4 ClaimResponse Payload</h3>
-            <pre className="text-xs text-emerald-400 dark:text-emerald-500 font-mono overflow-x-auto max-h-60">
-              {JSON.stringify(privacyMode ? "********" : maskFhirPayload(submitResult.fhir_claim_response || validation?.fhir_claim_response), null, 2)}
-            </pre>
-          </div>
-
-          <button
-            type="button"
-            onClick={reset}
-            className="bg-teal-700 hover:bg-teal-800 active:scale-95 text-white font-semibold text-sm px-6 py-2.5 rounded-xl transition-all shadow-sm"
-          >
-            Validate Next Claim
-          </button>
-        </div>
-      </div>
-    );
   }
 
   return (
@@ -228,7 +270,7 @@ export default function ValidationPanel({ claim, onValidationComplete, privacyMo
                       Synthetic demo data
                     </span>
                   )}
-                  <StatusBadge status={overallStatus.label} color={overallStatus.status} small />
+                  <StatusBadge status={displayedStatus.label} color={displayedStatus.status} small />
                   {(validation?.score ?? claim._preview?.score) !== undefined && (
                     <span className="text-xs text-slate-500 dark:text-slate-400" title="Automated score">
                       Automated score: <span className="font-semibold text-slate-700 dark:text-slate-300">{validation?.score ?? claim._preview.score}/100</span>
@@ -262,7 +304,7 @@ export default function ValidationPanel({ claim, onValidationComplete, privacyMo
         {/* Five primary workflow tabs */}
         <div className="bg-white dark:bg-slate-950 border-b border-slate-200 dark:border-slate-850 px-4 flex-shrink-0">
           <nav className="grid grid-cols-5 gap-1" aria-label="Claim sections">
-            {["Checks", "Details", "Departments", "Audit", "Outcome"].map((tab) => {
+            {tabs.map((tab) => {
               const isActive = activeTab === tab;
               return (
                 <button
@@ -389,7 +431,36 @@ export default function ValidationPanel({ claim, onValidationComplete, privacyMo
                 )}
               </div>}
 
-              {state === "idle" && (
+              {isSubmitted && (
+                <section className="order-1 space-y-4 rounded-lg border border-slate-300 bg-white p-5 dark:border-slate-700 dark:bg-slate-950" aria-label="Submitted claim lock">
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">Submitted, locked</h3>
+                    <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+                      Submitted version {lifecycle.version ?? "unknown"}. Its fingerprint is recorded with the submission event.
+                    </p>
+                    <code className="mt-2 block break-all text-xs text-slate-600 dark:text-slate-300">{lifecycle.version_fingerprint || "Fingerprint unavailable"}</code>
+                    {submitResult && <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{submitResult.mode === "mock" ? "Demo submission; no live payer received the claim." : "Sent through the configured openIMIS connection."}</p>}
+                  </div>
+                  {lifecycleError && <p role="alert" className="text-sm text-red-700 dark:text-red-400">{lifecycleError}</p>}
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" onClick={handleReadOnlyRecheck} disabled={recheckBusy} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-800 disabled:opacity-60 dark:border-slate-700 dark:text-slate-100">
+                      {recheckBusy ? "Checking…" : "Re-check against current rules (read-only)"}
+                    </button>
+                  </div>
+                  {recheckResult && <div role="status" className="rounded-md bg-slate-100 p-3 text-sm dark:bg-slate-900">Informational result for submitted version {recheckResult.version}: {recheckResult.status} · score {recheckResult.score}/100. Claim remains locked.</div>}
+                  <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                    <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                      Correction reason (required unless outcome is Returned or Rejected)
+                      <input value={correctionReason} onChange={(event) => setCorrectionReason(event.target.value)} maxLength={500} className="mt-1.5 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-normal dark:border-slate-700 dark:bg-slate-900" placeholder="Explain why a correction version is needed" />
+                    </label>
+                    <button type="button" onClick={handleCreateCorrection} disabled={correctionBusy || !correctionAvailable} className="self-end rounded-lg bg-teal-700 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
+                      {correctionBusy ? "Creating…" : "Create correction version"}
+                    </button>
+                  </div>
+                </section>
+              )}
+
+              {!isSubmitted && state === "idle" && (
                 <div className="order-1 bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-850 rounded-2xl p-6 text-center shadow-sm">
                   <p className="text-slate-500 dark:text-slate-300 text-sm mb-4 font-medium">
                     This claim needs validation against SHA pre-submission policies.
@@ -412,7 +483,7 @@ export default function ValidationPanel({ claim, onValidationComplete, privacyMo
                 </div>
               )}
 
-              {(state === "results" || state === "submitting") && validation && (
+              {!isSubmitted && (state === "results" || state === "submitting") && validation && (
                 <>
                   <div className="flex flex-col md:flex-row items-center gap-6 bg-white dark:bg-slate-950 border border-slate-200/80 dark:border-slate-850 rounded-2xl p-6 shadow-sm">
                     <ScoreGauge score={validation.score} />
@@ -488,7 +559,7 @@ export default function ValidationPanel({ claim, onValidationComplete, privacyMo
                           <option value="correction_requested">Correction requested</option>
                         </select>
                       </label>
-                      <button type="button" onClick={handleOfficerReview} disabled={!officerName.trim() || hasEdits || officerReviewState === "saving"} className="rounded-lg bg-slate-800 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
+                      <button type="button" onClick={handleOfficerReview} disabled={isSubmitted || !officerName.trim() || hasEdits || officerReviewState === "saving"} className="rounded-lg bg-slate-800 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
                         {officerReviewState === "saving" ? "Recording…" : "Record review"}
                       </button>
                     </div>
@@ -512,10 +583,16 @@ export default function ValidationPanel({ claim, onValidationComplete, privacyMo
                       </button>
                     )}
 
+                    {isStale && !hasEdits && !isSubmitted && (
+                      <button type="button" onClick={validate} disabled={state === "loading"} className="flex-1 rounded-xl bg-teal-700 py-3 text-sm font-semibold text-white disabled:opacity-60">
+                        {state === "loading" ? "Revalidating…" : "Revalidate current claim"}
+                      </button>
+                    )}
+
                     <button
                       type="button"
-                      onClick={submit}
-                      disabled={!canSubmit || overallStatus.status !== "green" || state === "submitting"}
+                        onClick={handleSubmit}
+                      disabled={isSubmitted || isStale || !canSubmit || overallStatus.status !== "green" || state === "submitting"}
                       className={`flex-1 text-white font-semibold text-sm py-3 rounded-xl transition-all shadow-md active:scale-95 ${
                         canSubmit
                           ? "bg-teal-700 hover:bg-teal-800 cursor-pointer"
@@ -649,11 +726,11 @@ export default function ValidationPanel({ claim, onValidationComplete, privacyMo
             <AuditTrailTab claimId={claim.id} privacyMode={privacyMode} />
           )}
 
-          {activeTab === "Departments" && (
-            <DeptGuideTab claimId={claim.id} department={claim.department} privacyMode={privacyMode} />
+          {departmentsEnabled && activeTab === "Departments" && (
+            <DeptGuideTab claimId={claim.id} department={claim.department} privacyMode={privacyMode} readOnly={isSubmitted} />
           )}
           {activeTab === "Outcome" && (
-            <OutcomeFeedbackTab claim={claim} privacyMode={privacyMode} />
+            <OutcomeFeedbackTab claim={claim} privacyMode={privacyMode} onOutcomeSaved={handleOutcomeSaved} />
           )}
         </div>
       </div>
@@ -677,5 +754,7 @@ ValidationPanel.propTypes = {
     department: PropTypes.string,
   }),
   onValidationComplete: PropTypes.func,
+  onLifecycleChange: PropTypes.func,
+  onLocalEdit: PropTypes.func,
   privacyMode: PropTypes.bool,
 };

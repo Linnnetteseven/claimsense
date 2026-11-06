@@ -20,13 +20,19 @@ const highlightMatch = (text, query) => {
 };
 
 function getClaimOverallStatus(claim, departmentReviews) {
+  if (String(claim?._lifecycle?.status || "").toLowerCase() === "submitted") {
+    return { status: "locked", label: "Submitted, locked", reason: "This submitted version is locked." };
+  }
+  if (String(claim?._lifecycle?.status || "").toLowerCase() === "needs_revalidation") {
+    return { status: "amber", label: "Needs revalidation", reason: "The claim or department sign-off changed after its last validation." };
+  }
   return getOverallStatus(
     { ...(claim._preview || {}), department: claim.department },
     departmentReviews[claim.id] || readDepartmentReview(claim.id, claim.department),
   );
 }
 
-export default function ClaimList({ claims: claimsProp, loading, privacyMode, selectedId, onSelect, onCountsChange }) {
+export default function ClaimList({ claims: claimsProp, loading, privacyMode, selectedId, onSelect, onCountsChange, lockedDepartment = null, showDepartmentFilter = true }) {
   const [query, setQuery] = useState("");
   const [activeTab, setActiveTab] = useState("all");
   const [activeDepartment, setActiveDepartment] = useState("all");
@@ -116,9 +122,9 @@ export default function ClaimList({ claims: claimsProp, loading, privacyMode, se
           className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder-slate-500 outline-none focus-visible:ring-2 focus-visible:ring-teal-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:placeholder-slate-400"
         />
         <div className="flex min-w-0 items-center gap-1.5">
-          <select id="claims-department-filter" aria-label="Filter by department" value={activeDepartment} onChange={(e) => setActiveDepartment(e.target.value)} className="w-28 shrink-0 rounded-md border border-slate-300 bg-white px-2 py-2 text-[11px] font-semibold text-slate-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
+          {showDepartmentFilter && !lockedDepartment && <select id="claims-department-filter" aria-label="Filter by department" value={activeDepartment} onChange={(e) => setActiveDepartment(e.target.value)} className="w-28 shrink-0 rounded-md border border-slate-300 bg-white px-2 py-2 text-[11px] font-semibold text-slate-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
             <option value="all">All depts</option><option value="outpatient">Outpatient</option><option value="maternity">Maternity</option><option value="renal">Renal</option><option value="surgical">Surgical</option>
-          </select>
+          </select>}
           <div className="flex shrink-0 items-center rounded-md border border-slate-300 bg-slate-100 p-0.5 dark:border-slate-700 dark:bg-slate-900" role="group" aria-label="Filter claims by overall status">
           {["all", "ready", "review", "error"].map((tab) => (
             <button
@@ -192,4 +198,6 @@ ClaimList.propTypes = {
   selectedId: PropTypes.string,
   onSelect: PropTypes.func.isRequired,
   onCountsChange: PropTypes.func,
+  lockedDepartment: PropTypes.string,
+  showDepartmentFilter: PropTypes.bool,
 };

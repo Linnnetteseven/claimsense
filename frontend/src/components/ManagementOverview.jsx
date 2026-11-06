@@ -50,7 +50,7 @@ function WeeklyTrend({ rows }) {
   );
 }
 
-export default function ManagementOverview({ onBack }) {
+export default function ManagementOverview({ onBack, showBack = true }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -67,7 +67,7 @@ export default function ManagementOverview({ onBack }) {
 
   if (error) return (
     <section className="flex-1 overflow-y-auto p-4 sm:p-5"><div className="mx-auto max-w-5xl space-y-4">
-      <div className="flex items-center justify-between"><button type="button" onClick={onBack} className="rounded px-2 py-1 text-sm font-semibold text-teal-900 hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-700 dark:text-teal-300 dark:hover:bg-slate-800">← Claims</button></div>
+      {showBack && <div className="flex items-center justify-between"><button type="button" onClick={onBack} className="rounded px-2 py-1 text-sm font-semibold text-teal-900 hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-700 dark:text-teal-300 dark:hover:bg-slate-800">← Claims</button></div>}
       <div role="alert" className="rounded-lg border border-slate-300 bg-white p-5 dark:border-slate-700 dark:bg-slate-950">
         <h1 className="text-xl font-bold text-slate-800 dark:text-slate-100">Management Overview</h1>
         <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">{error.includes("Analytics requires Oracle backend") ? "Analytics requires Oracle backend." : error}</p>
@@ -82,7 +82,7 @@ export default function ManagementOverview({ onBack }) {
     <section className="flex-1 overflow-y-auto p-4 sm:p-5">
       <div className="mx-auto max-w-6xl space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
-          <div><button type="button" onClick={onBack} className="mb-1 rounded px-2 py-1 text-xs font-semibold text-teal-900 hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-700 dark:text-teal-300 dark:hover:bg-slate-800">← Claims</button><h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">Management Overview</h1><p className="mt-1 text-sm text-slate-700 dark:text-slate-300">Aggregate workflow indicators for the synthetic facility workload.</p></div>
+          <div>{showBack && <button type="button" onClick={onBack} className="mb-1 rounded px-2 py-1 text-xs font-semibold text-teal-900 hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-700 dark:text-teal-300 dark:hover:bg-slate-800">← Claims</button>}<h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">Management Overview</h1><p className="mt-1 text-sm text-slate-700 dark:text-slate-300">Aggregate workflow indicators for the synthetic facility workload.</p></div>
           <button type="button" onClick={load} className="rounded-md border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-700 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800">Refresh</button>
         </div>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
