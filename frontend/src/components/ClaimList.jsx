@@ -1,7 +1,9 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import PropTypes from "prop-types";
-import { api } from "../api/client.js";
-import { LIST_BADGE_CLASSES, LIST_DOT_CLASSES } from "../constants/status.js";
+import { LIST_DOT_CLASSES } from "../constants/status.js";
+import { DEPARTMENT_REVIEW_UPDATED, readDepartmentReview } from "../utils/departmentReview.js";
+import { getOverallStatus } from "../utils/overallStatus.js";
+import { displayPatientName } from "../utils/syntheticName.js";
 
 const highlightMatch = (text, query) => {
   if (!query || !text) return text;
@@ -18,50 +20,71 @@ const highlightMatch = (text, query) => {
   );
 };
 
-export default function ClaimList({ selectedId, onSelect, onCountsChange }) {
-  const [allClaims, setAllClaims] = useState([]);  // source of truth — never touched after fetch
-  const [loading, setLoading] = useState(true);
+function getClaimOverallStatus(claim, departmentReviews) {
+  if (String(claim?._lifecycle?.status || "").toLowerCase() === "submitted") {
+    return { status: "locked", label: "Submitted, locked", reason: "This submitted version is locked." };
+  }
+  if (String(claim?._lifecycle?.status || "").toLowerCase() === "needs_revalidation") {
+    return { status: "amber", label: "Needs revalidation", reason: "The claim or department sign-off changed after its last validation." };
+  }
+  return getOverallStatus(
+    { ...(claim._preview || {}), department: claim.department },
+    departmentReviews[claim.id] || readDepartmentReview(claim.id, claim.department),
+  );
+}
+
+export default function ClaimList({ claims: claimsProp, loading, privacyMode, selectedId, onSelect, onCountsChange, lockedDepartment = null, showDepartmentFilter = true }) {
   const [query, setQuery] = useState("");
   const [activeTab, setActiveTab] = useState("all");
+  const [activeDepartment, setActiveDepartment] = useState("all");
+  const [departmentReviews, setDepartmentReviews] = useState({});
 
-  // Fetch ONCE on mount
-  const fetchClaims = useCallback(async () => {
-    setLoading(true);
-    try {
-      const data = await api.getClaims({ q: "", status: "all" });
-      const fetched = data.claims ?? [];
-      setAllClaims(fetched);
-      if (onCountsChange) {
-        onCountsChange({
-          total: fetched.length,
-          ready: fetched.filter((c) => c._preview?.color === "green").length,
-          review: fetched.filter((c) => c._preview?.color === "amber").length,
-          errors: fetched.filter((c) => c._preview?.color === "red").length,
-        });
-      }
-    } catch (err) {
-      console.error("Failed to fetch claims:", err);
-      setAllClaims([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [onCountsChange]);
+  const sourceClaims = useMemo(() => claimsProp ?? [], [claimsProp]);
 
   useEffect(() => {
-    fetchClaims();
-  }, [fetchClaims]);
+    setDepartmentReviews(Object.fromEntries(sourceClaims.map((claim) => [
+      claim.id,
+      readDepartmentReview(claim.id, claim.department),
+    ])));
+  }, [sourceClaims]);
+
+  useEffect(() => {
+    const refreshDepartmentReview = (event) => {
+      const { claimId, department } = event.detail || {};
+      if (!claimId) return;
+      setDepartmentReviews((reviews) => ({
+        ...reviews,
+        [claimId]: readDepartmentReview(claimId, department),
+      }));
+    };
+    window.addEventListener(DEPARTMENT_REVIEW_UPDATED, refreshDepartmentReview);
+    return () => window.removeEventListener(DEPARTMENT_REVIEW_UPDATED, refreshDepartmentReview);
+  }, []);
+
+  useEffect(() => {
+    onCountsChange?.({
+      total: sourceClaims.length,
+      ready: sourceClaims.filter((claim) => getClaimOverallStatus(claim, departmentReviews).status === "green").length,
+      review: sourceClaims.filter((claim) => getClaimOverallStatus(claim, departmentReviews).status === "amber").length,
+      errors: sourceClaims.filter((claim) => getClaimOverallStatus(claim, departmentReviews).status === "red").length,
+    });
+  }, [departmentReviews, onCountsChange, sourceClaims]);
 
   // Filter in memory — no API call, instant
   const filteredClaims = useMemo(() => {
-    let result = allClaims;
+    let result = sourceClaims;
+
+    if (activeDepartment !== "all") {
+      result = result.filter((c) => (c.department || "unassigned").toLowerCase() === activeDepartment);
+    }
 
     // Tab filter
     if (activeTab === "ready") {
-      result = result.filter((c) => c._preview?.color === "green");
+      result = result.filter((claim) => getClaimOverallStatus(claim, departmentReviews).status === "green");
     } else if (activeTab === "review") {
-      result = result.filter((c) => c._preview?.color === "amber");
+      result = result.filter((claim) => getClaimOverallStatus(claim, departmentReviews).status === "amber");
     } else if (activeTab === "error") {
-      result = result.filter((c) => c._preview?.color === "red");
+      result = result.filter((claim) => getClaimOverallStatus(claim, departmentReviews).status === "red");
     }
 
     // Search filter
@@ -69,16 +92,16 @@ export default function ClaimList({ selectedId, onSelect, onCountsChange }) {
       const q = query.trim().toLowerCase();
       result = result.filter(
         (c) =>
-          c.patient_name?.toLowerCase().includes(q) ||
+          displayPatientName(c).toLowerCase().includes(q) ||
           c.id?.toLowerCase().includes(q) ||
           c.facility_name?.toLowerCase().includes(q)
       );
     }
 
     return result;
-  }, [allClaims, query, activeTab]);
+  }, [sourceClaims, query, activeTab, activeDepartment, departmentReviews]);
 
-  if (loading) {
+  if (loading && sourceClaims.length === 0) {
     return (
       <div className="space-y-3 p-4" aria-busy="true">
         {[...Array(5)].map((_, i) => (
@@ -90,76 +113,74 @@ export default function ClaimList({ selectedId, onSelect, onCountsChange }) {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="p-3 space-y-2">
+      <div className="space-y-2 border-b border-slate-200 p-2.5 dark:border-slate-800">
         <input
-          type="text"
+          type={privacyMode ? "password" : "text"}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
+          aria-label="Search claims"
           placeholder="Search patient or ID..."
-          className="w-full text-sm p-2.5 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 outline-none"
+          className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder-slate-500 outline-none focus-visible:ring-2 focus-visible:ring-teal-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:placeholder-slate-400"
         />
-        <div className="flex bg-slate-100 dark:bg-slate-900/60 p-1 rounded-lg border dark:border-slate-800">
+        <div className="flex min-w-0 items-center gap-1.5">
+          {showDepartmentFilter && !lockedDepartment && <select id="claims-department-filter" aria-label="Filter by department" value={activeDepartment} onChange={(e) => setActiveDepartment(e.target.value)} className="w-28 shrink-0 rounded-md border border-slate-300 bg-white px-2 py-2 text-[11px] font-semibold text-slate-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
+            <option value="all">All depts</option><option value="outpatient">Outpatient</option><option value="maternity">Maternity</option><option value="renal">Renal</option><option value="surgical">Surgical</option>
+          </select>}
+          <div className="flex shrink-0 items-center rounded-md border border-slate-300 bg-slate-100 p-0.5 dark:border-slate-700 dark:bg-slate-900" role="group" aria-label="Filter claims by overall status">
           {["all", "ready", "review", "error"].map((tab) => (
             <button
               key={tab}
+              type="button"
               onClick={() => setActiveTab(tab)}
-              className={`flex-1 py-1.5 text-[10px] font-bold uppercase rounded-md transition-all ${
+              aria-pressed={activeTab === tab}
+              className={`min-w-8 rounded px-1.5 py-1.5 text-[9px] font-bold uppercase transition-colors ${
                 activeTab === tab
-                  ? "bg-white dark:bg-slate-800 shadow-sm text-slate-800 dark:text-slate-100"
-                  : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300"
+                  ? "bg-teal-800 text-white dark:bg-teal-700"
+                  : "text-slate-700 hover:bg-white dark:text-slate-300 dark:hover:bg-slate-800"
               }`}
             >
               {tab}
             </button>
           ))}
+          </div>
         </div>
       </div>
 
-      <ul className="space-y-2 p-3 overflow-y-auto flex-1">
+      <ul className="flex-1 space-y-1 overflow-y-auto p-1.5">
         {filteredClaims.length === 0 ? (
-          <li className="p-8 text-slate-400 dark:text-slate-500 text-sm text-center font-medium">
-            {query ? `No claims matching "${query}"` : "No claims found."}
+          <li className="p-8 text-slate-500 dark:text-slate-400 text-sm text-center font-medium">
+            {query ? `No claims matching "${privacyMode ? "********" : query}"` : "No claims found."}
           </li>
         ) : (
           filteredClaims.map((claim) => {
             const preview = claim._preview ?? {};
             const isSelected = claim.id === selectedId;
-            const dotColor = preview.color ?? "red";
+            const overallStatus = getClaimOverallStatus(claim, departmentReviews);
+            const dotColor = overallStatus.status;
             const dotClass = LIST_DOT_CLASSES[dotColor] ?? LIST_DOT_CLASSES.red;
-            const badgeClass = LIST_BADGE_CLASSES[dotColor] ?? LIST_BADGE_CLASSES.red;
 
             return (
               <li key={claim.id}>
                 <button
                   type="button"
                   onClick={() => onSelect(claim.id, claim)}
-                  className={`w-full text-left p-3.5 rounded-xl border transition-all duration-200 block shadow-sm ${
+                  className={`block w-full rounded-md border px-2 py-1.5 text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-700 ${
                     isSelected
-                      ? "bg-teal-50/50 dark:bg-teal-950/25 border-teal-500 ring-1 ring-teal-500/50"
-                      : "bg-white dark:bg-slate-950 border-slate-200 dark:border-slate-850 hover:border-slate-300 dark:hover:border-slate-800 hover:bg-slate-50/50 dark:hover:bg-slate-900/50 active:bg-slate-50 dark:active:bg-slate-900"
+                      ? "border-teal-700 bg-teal-50 dark:border-teal-500 dark:bg-teal-950/40"
+                      : "border-transparent bg-white hover:border-slate-300 hover:bg-slate-50 dark:bg-slate-950 dark:hover:border-slate-700 dark:hover:bg-slate-900"
                   }`}
                 >
-                  <div className="flex items-start gap-3">
-                    <span className={`mt-1.5 w-2 h-2 rounded-full flex-shrink-0 ${dotClass}`} />
-                    <div className="flex-1 min-w-0">
-                      <p className={`text-sm font-semibold truncate ${isSelected ? "text-teal-900 dark:text-teal-350" : "text-slate-800 dark:text-slate-200"}`}>
-                        {highlightMatch(claim.patient_name || "Unknown Patient", query)}
+                  <div className="flex min-w-0 items-center gap-2">
+                      <span aria-label={overallStatus.label} title={overallStatus.label} className={`h-2 w-2 shrink-0 rounded-full ${dotClass}`} />
+                      <p className={`min-w-0 flex-1 truncate text-xs font-semibold ${isSelected ? "text-teal-900 dark:text-teal-100" : "text-slate-900 dark:text-slate-100"}`}>
+                        {privacyMode ? "********" : highlightMatch(displayPatientName(claim), query)}
                       </p>
-                      <p className="text-xs text-slate-500 dark:text-slate-400 font-medium truncate mt-0.5">
-                        {highlightMatch(claim.facility_name || "", query)}
-                      </p>
-                      <div className="flex items-center gap-1.5 mt-2">
-                        <span className="text-[10px] bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-400 font-semibold px-1.5 py-0.5 rounded border dark:border-slate-800">
-                          {highlightMatch(claim.id || "", query)}
-                        </span>
-                        <span className="text-[10px] text-slate-400 dark:text-slate-500 font-medium">{claim.visit_date}</span>
-                      </div>
-                    </div>
-                    {preview.score !== undefined && (
-                      <span className={`flex-shrink-0 text-xs font-bold rounded-lg px-2 py-1 shadow-sm border ${badgeClass}`}>
-                        {preview.score}
-                      </span>
-                    )}
+                      {preview.score !== undefined && <span className="shrink-0 text-[10px] font-semibold text-slate-700 dark:text-slate-200" aria-label={`Automated score ${preview.score}`}>{preview.score}/100</span>}
+                  </div>
+                  <div className="ml-4 mt-0.5 flex min-w-0 items-center gap-2 text-[10px] leading-4 text-slate-700 dark:text-slate-300">
+                    <span className="shrink-0 font-semibold uppercase">{claim.department || "unassigned"}</span>
+                    <span aria-hidden="true">·</span>
+                    <span className="truncate font-mono">{privacyMode ? "********" : highlightMatch(claim.id || "", query)}</span>
                   </div>
                 </button>
               </li>
@@ -172,7 +193,12 @@ export default function ClaimList({ selectedId, onSelect, onCountsChange }) {
 }
 
 ClaimList.propTypes = {
+  claims: PropTypes.arrayOf(PropTypes.object),
+  loading: PropTypes.bool,
+  privacyMode: PropTypes.bool,
   selectedId: PropTypes.string,
   onSelect: PropTypes.func.isRequired,
   onCountsChange: PropTypes.func,
+  lockedDepartment: PropTypes.string,
+  showDepartmentFilter: PropTypes.bool,
 };

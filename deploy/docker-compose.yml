@@ -1,0 +1,22 @@
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    env_file:
+      - ../.env
+    environment:
+      # Set this to an empty value in ../.env for walletless TCPS connections.
+      ORACLE_WALLET_DIR: ${ORACLE_WALLET_DIR:-/run/secrets/oracle-wallet}
+      EVIDENCE_DIR: /app/evidence_packs
+    ports:
+      - "127.0.0.1:8001:8001"
+    volumes:
+      - ../oracle-wallet:/run/secrets/oracle-wallet:ro
+      - evidence-packs:/app/evidence_packs
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  evidence-packs:

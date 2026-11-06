@@ -13,6 +13,17 @@ frontend/.vite/
 # Secrets
 .env
 *.env.local
+**/wallet/
+**/wallets/
+**/oracle_wallet/
+**/.oracle-wallet/
+wallet.zip
+Wallet_*.zip
+oracle-wallet/
+evidence_packs/
 
 # OS
 .DS_Store
+
+frontend/test-results/
+frontend/playwright-report/

@@ -1,18 +1,77 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import ClaimList from "./components/ClaimList.jsx";
 import ValidationPanel from "./components/ValidationPanel.jsx";
 import LandingPage from "./components/LandingPage.jsx";
 import AddClaimModal from "./components/AddClaimModal.jsx";
+import PrivacyToggle from "./components/PrivacyToggle.jsx";
+import ManagementOverview from "./components/ManagementOverview.jsx";
 import { useClaims } from "./hooks/useClaims.js";
+import { api } from "./api/client.js";
+
+const DEPARTMENT_ROLES = [
+  { value: "outpatient", label: "Outpatient claims desk", department: "outpatient" },
+  { value: "renal", label: "Renal claims desk", department: "renal" },
+  { value: "maternity", label: "Maternity claims desk", department: "maternity" },
+  { value: "manager", label: "Manager", department: null },
+];
+const GENERAL_ROLES = [
+  { value: "claims_officer", label: "Claims officer", department: null },
+  { value: "manager", label: "Manager", department: null },
+];
 
 export default function App() {
   const [selectedClaim, setSelectedClaim] = useState(null);
   const [counts, setCounts] = useState({ total: 0, ready: 0, review: 0, errors: 0 });
 
-  const { claims, loading, error, reload, patchPreview, addClaim } = useClaims();
+  const { claims, loading, error, offline, savedAt, reload, patchPreview, markNeedsRevalidation, addClaim } = useClaims();
   const [view, setView] = useState("landing");
   const [selectedId, setSelectedId] = useState(null);
   const [addModalOpen, setAddModalOpen] = useState(false);
+  const [privacyMode, setPrivacyMode] = useState(() => localStorage.getItem("presentationPrivacy") === "on");
+  const [departmentsEnabled, setDepartmentsEnabled] = useState(true);
+  const roleOptions = departmentsEnabled ? DEPARTMENT_ROLES : GENERAL_ROLES;
+  const [demoRole, setDemoRole] = useState(() => localStorage.getItem("hakikiDemoRole") || "outpatient");
+  const role = roleOptions.find((item) => item.value === demoRole) || roleOptions[0];
+  const managerOnly = role.value === "manager";
+  const [databaseNoticeDismissed, setDatabaseNoticeDismissed] = useState(false);
+  const previousDatabaseError = useRef(error);
+
+  useEffect(() => {
+    if (error && !previousDatabaseError.current) setDatabaseNoticeDismissed(false);
+    previousDatabaseError.current = error;
+  }, [error]);
+
+  useEffect(() => {
+    let active = true;
+    api.getUiSettings().then((settings) => {
+      if (active) setDepartmentsEnabled(settings.departments_enabled !== false);
+    }).catch(() => {});
+    return () => { active = false; };
+  }, []);
+
+  function handleValidationComplete(claimId, validationResult, updatedClaim) {
+    patchPreview(claimId, validationResult);
+    if (updatedClaim) {
+      setSelectedClaim((current) => current?.id === claimId ? { ...current, ...updatedClaim } : current);
+    }
+    if (validationResult.lifecycle) {
+      setSelectedClaim((current) => current?.id === claimId ? { ...current, _lifecycle: validationResult.lifecycle } : current);
+    }
+  }
+
+  function handleLifecycleChange(claimId, lifecycle, updatedClaim) {
+    setSelectedClaim((current) => current?.id === claimId ? { ...current, ...(updatedClaim || {}), _lifecycle: lifecycle } : current);
+    void reload();
+  }
+
+  function handleLocalEdit(claimId) {
+    markNeedsRevalidation(claimId);
+    setSelectedClaim((current) => current?.id === claimId ? {
+      ...current,
+      _lifecycle: { ...(current._lifecycle || {}), status: "needs_revalidation" },
+      _preview: { ...(current._preview || {}), status: "Needs revalidation", color: "amber" },
+    } : current);
+  }
 
   const [darkMode, setDarkMode] = useState(() => {
     if (typeof window !== "undefined") {
@@ -33,15 +92,49 @@ export default function App() {
     }
   }, [darkMode]);
 
-  if (!selectedId && claims.length > 0) {
-    setSelectedId(claims[0].id);
-  }
+  useEffect(() => {
+    localStorage.setItem("presentationPrivacy", privacyMode ? "on" : "off");
+  }, [privacyMode]);
 
-  const readyCount = claims.filter((c) => c._preview?.color === "green").length;
+  useEffect(() => {
+    if (!roleOptions.some((item) => item.value === demoRole)) setDemoRole(roleOptions[0].value);
+  }, [demoRole, roleOptions]);
+
+  useEffect(() => {
+    localStorage.setItem("hakikiDemoRole", role.value);
+    if (view !== "landing") setView(managerOnly ? "overview" : view === "overview" ? "dashboard" : view);
+  }, [role.value, managerOnly, view]);
+
+  const visibleClaims = useMemo(() => role.department
+    ? claims.filter((claim) => (claim.department || "").toLowerCase() === role.department)
+    : claims, [claims, role.department]);
+
+  useEffect(() => {
+    if ((!selectedId || !visibleClaims.some((claim) => claim.id === selectedId)) && visibleClaims.length > 0) {
+      setSelectedId(visibleClaims[0].id);
+      setSelectedClaim(visibleClaims[0]);
+    }
+  }, [visibleClaims, selectedId]);
+
+  // Oracle queue rows contain only summary fields; fetch the complete claim
+  // only when an officer selects it for the detailed workflow.
+  useEffect(() => {
+    if (!selectedId || managerOnly || !visibleClaims.some((claim) => claim.id === selectedId)) return undefined;
+    let currentSelection = true;
+    api.getClaim(selectedId)
+      .then((fullClaim) => {
+        if (currentSelection) {
+          setSelectedClaim((current) => current?.id === selectedId ? { ...current, ...fullClaim } : current);
+        }
+      })
+      .catch(() => {});
+    return () => { currentSelection = false; };
+  }, [selectedId, managerOnly, visibleClaims]);
 
   async function handleAddClaim(claimData) {
     const created = await addClaim(claimData);
     setSelectedId(created.id);
+    setSelectedClaim(created);
     setAddModalOpen(false);
     setView("dashboard");
   }
@@ -59,107 +152,49 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-screen bg-slate-50 dark:bg-slate-900 overflow-hidden font-sans text-slate-800 dark:text-slate-100 antialiased">
-      {/* Left sidebar: Persistent Queue */}
-      <aside className="w-80 flex-shrink-0 bg-white dark:bg-slate-950 border-r border-slate-200 dark:border-slate-800 flex flex-col">
-        {/* Branding Header - Updated to Hakiki Reference Style */}
-        <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800/60 flex items-center justify-between min-h-[72px]">
-          <button
-            type="button"
-            onClick={() => setView("landing")}
-            className="flex items-center hover:opacity-80 transition-opacity text-left shrink-0"
-          >
-            <div className="flex items-center gap-2.5">
-              <img src="/favicon.png" alt="Hakiki Logo" className="h-8 w-8 object-contain" />
-              <div className="flex flex-col text-left">
-                {/* The new styled Hakiki logo text */}
-                <span className="text-3xl font-black tracking-tighter text-[#0A4D3C] dark:text-teal-400 leading-none mt-1">
-                  Hakiki
-                </span>
-              </div>
-            </div>
+    <div className="flex h-screen min-h-0 flex-col overflow-hidden bg-slate-100 font-sans text-slate-900 antialiased dark:bg-slate-900 dark:text-slate-100">
+      <header className="z-20 flex min-h-14 shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-slate-200 bg-white px-4 py-2 dark:border-slate-800 dark:bg-slate-950">
+        <div className="flex min-w-0 items-center gap-3">
+          <button type="button" onClick={() => setView("landing")} className="flex shrink-0 items-center gap-2 text-left" aria-label="Return to Hakiki home">
+            <img src="/favicon.png" alt="" className="h-7 w-7 object-contain" />
+            <span className="text-2xl font-black tracking-tight text-teal-800 dark:text-teal-400">Hakiki</span>
           </button>
-          <div className="flex items-center gap-2 ml-4">
-            <button
-              type="button"
-              onClick={() => setDarkMode(!darkMode)}
-              aria-label="Toggle Theme"
-              className="p-2 text-slate-500 hover:text-teal-600 dark:text-slate-400 dark:hover:text-teal-400 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-            >
-              {darkMode ? (
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707m12.728 0l-.707-.707M6.343 6.364l-.707-.707M12 8a4 4 0 100 8 4 4 0 000-8z" />
-                </svg>
-              ) : (
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
-                </svg>
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={() => setAddModalOpen(true)}
-              className="text-xs bg-[#00897B] hover:bg-teal-700 active:scale-95 transition-all text-white font-semibold rounded-lg px-2.5 py-2 shadow-sm whitespace-nowrap"
-            >
-              + Add
-            </button>
-          </div>
+          {view === "dashboard" && !managerOnly && <span className="inline-flex whitespace-nowrap rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">Demo environment: synthetic data</span>}
         </div>
-
-        {/* Search & Stats Header */}
-        <div className="px-5 py-3 bg-slate-50/50 dark:bg-slate-900/50 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
-          <div>
-            <p className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
-              Claims Queue
-            </p>
-            {!loading && (
-              <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-                {counts.total || claims.length} total • {counts.ready || readyCount} ready
-              </p>
-            )}
-          </div>
-          <button
-            type="button"
-            onClick={reload}
-            className="text-xs text-slate-500 dark:text-slate-400 hover:text-teal-600 dark:hover:text-teal-400 font-medium transition-colors"
-          >
-            Refresh
+        <div className="flex flex-wrap items-center justify-end gap-1.5 sm:gap-2">
+          <PrivacyToggle enabled={privacyMode} onToggle={() => setPrivacyMode((enabled) => !enabled)} />
+          <button type="button" onClick={() => setDarkMode(!darkMode)} aria-label="Toggle theme" className="rounded-md p-2 text-slate-700 hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-700 dark:text-slate-200 dark:hover:bg-slate-800">
+            <span aria-hidden="true">{darkMode ? "☼" : "☾"}</span>
           </button>
+          <label className="flex items-center gap-2 rounded-md px-2 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200">
+            <span>Demo role · no authentication</span>
+            <select value={role.value} onChange={(event) => { setDemoRole(event.target.value); setView(event.target.value === "manager" ? "overview" : "dashboard"); }} aria-label="Select demo role (not authentication)" className="max-w-52 rounded-md border border-slate-300 bg-white px-2 py-2 text-xs text-slate-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">{roleOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select>
+          </label>
+          {!managerOnly && <button type="button" onClick={() => setView(view === "overview" ? "dashboard" : "overview")} aria-current={view === "overview" ? "page" : undefined} className="rounded-md border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-700 dark:border-slate-700 dark:text-slate-100 dark:hover:bg-slate-800">{view === "overview" ? "Claims" : "Management Overview"}</button>}
+          {!managerOnly && <button type="button" onClick={() => setAddModalOpen(true)} aria-label="Add claim" className="rounded-md bg-teal-700 px-3 py-2 text-xs font-bold text-white hover:bg-teal-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700">+ Add</button>}
         </div>
+      </header>
 
-        {error && (
-          <div role="alert" className="mx-4 my-2 text-xs text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-950/20 border border-red-100 dark:border-red-900/40 rounded-lg p-3">
-            Failed to load: {error}
+      {error && !databaseNoticeDismissed && <div role="alert" className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-amber-700 bg-amber-50 px-4 py-2 text-sm text-amber-950 dark:border-amber-500 dark:bg-amber-950 dark:text-amber-100">
+        <strong>Database slow / unreachable</strong>
+        <span className="min-w-0 flex-1">{offline && savedAt ? `Offline: showing data saved at ${new Date(savedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.` : error}</span>
+        <button type="button" onClick={() => { setDatabaseNoticeDismissed(false); void reload(); }} disabled={loading} className="rounded border border-amber-800 px-3 py-1 font-semibold text-amber-950 hover:bg-amber-100 disabled:opacity-60 dark:border-amber-300 dark:text-amber-100 dark:hover:bg-amber-900">{loading ? "Retrying…" : "Retry"}</button>
+        <button type="button" aria-label="Dismiss database notice" onClick={() => setDatabaseNoticeDismissed(true)} className="rounded px-2 py-1 text-lg font-bold leading-none hover:bg-amber-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-800 dark:hover:bg-amber-900">×</button>
+      </div>}
+
+      {managerOnly ? <main className="flex min-h-0 flex-1 overflow-hidden bg-slate-50 dark:bg-slate-900" aria-label="Management overview"><ManagementOverview onBack={() => {}} showBack={false} /></main> : <div className="flex min-h-0 flex-1 overflow-hidden">
+        <aside className="flex w-[300px] max-w-[36vw] shrink-0 flex-col border-r border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950 xl:w-[340px] 2xl:w-[370px]" aria-label="Claims queue">
+          <div className="flex h-12 shrink-0 items-center justify-between border-b border-slate-200 px-4 dark:border-slate-800">
+            <div><p className="text-[11px] font-bold uppercase tracking-wide text-slate-700 dark:text-slate-200">Claims queue</p>{!loading && <p className="text-[11px] text-slate-600 dark:text-slate-300">{counts.total || claims.length} total · {counts.ready} ready</p>}</div>
+            <button type="button" onClick={() => { setDatabaseNoticeDismissed(false); void reload(); }} disabled={loading} className="rounded px-2 py-1 text-xs font-semibold text-teal-800 hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-teal-700 disabled:opacity-60 dark:text-teal-300 dark:hover:bg-slate-800">{loading ? "Loading…" : "Refresh"}</button>
           </div>
-        )}
+          <div className="min-h-0 flex-1"><ClaimList claims={visibleClaims} loading={loading} privacyMode={privacyMode} selectedId={selectedId} lockedDepartment={role.department} showDepartmentFilter={!departmentsEnabled} onSelect={(id, claim) => { setSelectedId(id); setSelectedClaim(claim); }} onCountsChange={setCounts} /></div>
+        </aside>
 
-        {/* Scrollable list of claims */}
-        <div className="flex-1 overflow-y-auto">
-          <ClaimList
-            selectedId={selectedId}
-            onSelect={(id, claim) => {
-              setSelectedId(id);
-              setSelectedClaim(claim);
-            }}
-            onCountsChange={setCounts}
-          />
-        </div>
-
-        {/* Footer info */}
-        <div className="px-5 py-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50/30 dark:bg-slate-900/30">
-          <p className="text-[10px] text-slate-400 dark:text-slate-500 font-medium">
-            Hakiki Claims Portal
-          </p>
-        </div>
-      </aside>
-
-      {/* Right workspace: Dynamic Workspace */}
-      <main className="flex-1 flex flex-col overflow-hidden bg-slate-100/60 dark:bg-slate-900/40">
-        <ValidationPanel 
-          claim={selectedClaim} 
-          onValidationComplete={patchPreview} 
-        />
-      </main>
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-slate-50 dark:bg-slate-900" aria-label={view === "overview" ? "Management overview" : "Claim workspace"}>
+          {view === "overview" ? <ManagementOverview onBack={() => setView("dashboard")} /> : <ValidationPanel key={selectedClaim?.id ?? "no-claim"} claim={selectedClaim} privacyMode={privacyMode} departmentsEnabled={departmentsEnabled} onValidationComplete={handleValidationComplete} onLifecycleChange={handleLifecycleChange} onLocalEdit={handleLocalEdit} />}
+        </main>
+      </div>}
 
       {addModalOpen && (
         <AddClaimModal onClose={() => setAddModalOpen(false)} onSubmit={handleAddClaim} />

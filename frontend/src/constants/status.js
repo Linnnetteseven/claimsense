@@ -49,6 +49,7 @@ export const LIST_DOT_CLASSES = {
   green: "bg-emerald-500",
   amber: "bg-amber-500",
   red: "bg-red-500",
+  locked: "bg-slate-500",
 };
 
 export const LIST_BADGE_CLASSES = {

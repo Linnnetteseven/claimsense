@@ -61,7 +61,7 @@ export default function ScoreGauge({ score }) {
           / 100
         </text>
       </svg>
-      <p className="text-sm text-slate-500">{scoreToLabel(score)}</p>
+      <p className="text-sm text-slate-500">Automated score</p>
     </div>
   );
 }

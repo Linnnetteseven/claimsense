@@ -13,6 +13,11 @@ from datetime import date, datetime
 from typing import Optional
 
 
+# Bump this identifier and date whenever the deterministic rule set changes.
+RULES_VERSION = "hakiki-rules-2026-11-06.1"
+RULES_DATE = "2026-11-06"
+
+
 @dataclass
 class RuleResult:
     rule_id: str
@@ -268,8 +273,8 @@ def rule_amount_reasonable(claim: dict) -> RuleResult:
             False,
             "warning",
             "claimed_amount",
-            f"Claimed KES {claimed:,.0f} exceeds the {('maternity' if is_maternity else 'standard')} threshold of KES {threshold:,.0f}",
-            "Attach supporting documentation. SHA may flag this for manual review.",
+            f"Hakiki review flag: KES {claimed:,.0f} exceeds its internal {('maternity' if is_maternity else 'standard')} amount threshold of KES {threshold:,.0f}",
+            "This is an internal triage heuristic, not an SHA limit. Check the intervention-specific tariff, coverage, and authorization requirements.",
         )
 
     return _pass("AMOUNT_HIGH", "warning")
@@ -280,12 +285,21 @@ def rule_amount_reasonable(claim: dict) -> RuleResult:
 # Errors first so the score reflects the most critical issues prominently.
 # ---------------------------------------------------------------------------
 
+# Draft desk mapping: Maternity claims desk. Triggered by department=maternity or
+# ICD-10 O80/O82, then checks partograph_id for a delivery/labour claim.
+# Confirm this rule and supporting documentation with desk officers before a pilot.
 def rule_maternity_partograph(claim: dict) -> RuleResult:
     department = str(claim.get("department", "")).strip().lower()
     diagnosis = str(claim.get("diagnosis_code", "")).strip().upper()
-    is_maternity = department == "maternity" or diagnosis.startswith("O")
+    maternity_related = department == "maternity" or diagnosis.startswith(("O80", "O82"))
+    is_delivery = (
+        diagnosis.startswith(("O80", "O82"))
+        or bool(claim.get("delivery_mode"))
+        or bool(claim.get("in_labour"))
+        or bool(claim.get("is_delivery"))
+    )
 
-    if not is_maternity:
+    if not maternity_related or not is_delivery:
         return _pass("MISSING_PARTOGRAPH")
 
     partograph = str(claim.get("partograph_id", "")).strip()
@@ -301,6 +315,8 @@ def rule_maternity_partograph(claim: dict) -> RuleResult:
     return _pass("MISSING_PARTOGRAPH")
 
 
+# Draft desk mapping: Renal claims desk. Triggered by department=renal and
+# sessions_this_week > 3; this is an internal review flag, not a SHA limit.
 def rule_renal_session_frequency(claim: dict) -> RuleResult:
     department = str(claim.get("department", "")).strip().lower()
     if department != "renal":
@@ -316,12 +332,14 @@ def rule_renal_session_frequency(claim: dict) -> RuleResult:
             False,
             "warning",
             "sessions_this_week",
-            f"{sessions} dialysis sessions this week exceeds the typical 3x/week pattern",
-            "Add a clinical note explaining the increased frequency, or correct the session count.",
+            f"Hakiki review flag: {sessions} dialysis sessions this week is above its internal review threshold of 3",
+            "This is not a universal SHA session limit. Compare the dates and count with the treatment order, authorization, and intervention-specific benefit limits.",
         )
     return _pass("IMPLAUSIBLE_FREQUENCY", "warning")
 
 
+# Draft claim-type check: surgical overnight claims with no postop_notes_attached.
+# No Surgical desk role is configured in the current demo roles.
 def rule_surgical_postop_notes(claim: dict) -> RuleResult:
     department = str(claim.get("department", "")).strip().lower()
     if department != "surgical":

@@ -25,7 +25,7 @@ class OpenIMISClient:
         logger.debug("GET %s", url)
         async with httpx.AsyncClient(
             headers=self._headers,
-            verify=False,
+            verify=config.OPENIMIS_VERIFY_TLS,
             timeout=httpx.Timeout(15.0),
         ) as client:
             response = await client.get(url)
@@ -49,7 +49,7 @@ class OpenIMISClient:
         logger.info("POST ClaimResponse: %s", payload.get("id"))
         async with httpx.AsyncClient(
             headers=self._headers,
-            verify=False,
+            verify=config.OPENIMIS_VERIFY_TLS,
             timeout=httpx.Timeout(15.0),
         ) as client:
             response = await client.post(url, json=payload)
@@ -60,7 +60,7 @@ class OpenIMISClient:
         url = f"{self.base}/api/claim/fhir/r4/Coverage/?beneficiary={patient_id}&status=active"
         async with httpx.AsyncClient(
             headers=self._headers,
-            verify=False,
+            verify=config.OPENIMIS_VERIFY_TLS,
             timeout=httpx.Timeout(10.0),
         ) as client:
             response = await client.get(url)

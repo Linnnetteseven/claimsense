@@ -5,12 +5,12 @@ const EMPTY_ITEM = { service_code: "", description: "", quantity: 1, unit_price:
 
 function emptyForm() {
   return {
-    patient_name: "",
-    patient_id: "",
+    patient_id: `SYN-${String(Math.floor(Math.random() * 1_000_000)).padStart(6, "0")}`,
     dob: "",
     gender: "F",
     facility_name: "",
     facility_code: "",
+    department: "outpatient",
     visit_date: new Date().toISOString().slice(0, 10),
     diagnosis_code: "",
     diagnosis_description: "",
@@ -70,6 +70,8 @@ export default function AddClaimModal({ onClose, onSubmit }) {
     try {
       await onSubmit({
         ...form,
+        facility_name: "Kerugoya Level 5 Hospital",
+        facility_code: "KRG-005",
         items: form.items.filter((item) => item.service_code || item.description),
         claimed_amount: claimedAmount,
       });
@@ -118,22 +120,13 @@ export default function AddClaimModal({ onClose, onSubmit }) {
               Patient
             </legend>
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Patient name" required>
+              <p className="col-span-2 text-xs text-slate-500 dark:text-slate-400">Synthetic display names are generated for presentation and are not saved with the claim.</p>
+              <Field label="Synthetic patient reference" required>
                 <input
                   required
-                  value={form.patient_name}
-                  onChange={(e) => updateField("patient_name", e.target.value)}
-                  className="input"
-                  placeholder="Grace Wanjiru Njoroge"
-                />
-              </Field>
-              <Field label="Insuree / Patient ID" required>
-                <input
-                  required
+                  readOnly
                   value={form.patient_id}
-                  onChange={(e) => updateField("patient_id", e.target.value)}
-                  className="input"
-                  placeholder="INS-KE-44218"
+                  className="input bg-slate-100 dark:bg-slate-900"
                 />
               </Field>
               <Field label="Date of birth">
@@ -163,23 +156,16 @@ export default function AddClaimModal({ onClose, onSubmit }) {
               Visit
             </legend>
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Facility name" required>
-                <input
-                  required
-                  value={form.facility_name}
-                  onChange={(e) => updateField("facility_name", e.target.value)}
-                  className="input"
-                  placeholder="Kenyatta National Hospital"
-                />
+              <Field label="Facility">
+                <div className="input text-slate-500">Kerugoya Level 5 Hospital · KRG-005</div>
               </Field>
-              <Field label="Facility code" required>
-                <input
-                  required
-                  value={form.facility_code}
-                  onChange={(e) => updateField("facility_code", e.target.value)}
-                  className="input"
-                  placeholder="KNH-001"
-                />
+              <Field label="Owning department" required>
+                <select required value={form.department} onChange={(e) => updateField("department", e.target.value)} className="input">
+                  <option value="outpatient">Outpatient</option>
+                  <option value="maternity">Maternity</option>
+                  <option value="renal">Renal Unit</option>
+                  <option value="surgical">Surgical</option>
+                </select>
               </Field>
               <Field label="Visit date" required>
                 <input
@@ -258,7 +244,6 @@ export default function AddClaimModal({ onClose, onSubmit }) {
             </div>
             <div className="space-y-2">
               {form.items.map((item, index) => (
-                // eslint-disable-next-line react/no-array-index-key -- rows have no stable id until saved
                 <div key={index} className="grid grid-cols-12 gap-2 items-center">
                   <input
                     value={item.service_code}
@@ -323,7 +308,7 @@ export default function AddClaimModal({ onClose, onSubmit }) {
             <button
               type="submit"
               disabled={submitting}
-              className="flex-1 bg-teal-600 text-white py-2.5 rounded-lg text-sm font-medium hover:bg-teal-700 disabled:opacity-60 active:scale-95 transition-all"
+              className="flex-1 bg-teal-700 text-white py-2.5 rounded-lg text-sm font-medium hover:bg-teal-700 disabled:opacity-60 active:scale-95 transition-all"
             >
               {submitting ? "Adding…" : "Add claim to queue"}
             </button>

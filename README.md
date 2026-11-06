@@ -1,14 +1,34 @@
 # 🩺 Hakiki
 "Grammarly for hospital claims."
 
-## *An AI-Powered Claims Intelligence Platform for Healthcare Financing*
+## *Department-led claim readiness for healthcare facilities*
+
+### Demo roles and department workflow
+
+`DEPARTMENTS_ENABLED` defaults to `true`. With department mode enabled, the demo role selector offers Outpatient, Renal, and Maternity claims desks plus Manager. Desk views filter the queue to their own department; the Manager view contains the aggregate Management Overview only. These are presentation controls, not authentication or production access control. With `DEPARTMENTS_ENABLED=false`, the Department Workspace and department-review API are disabled, and the demo roles become Claims officer and Manager. Core checks and claim-type checks continue to run.
+
+The single **Demo environment: synthetic data** tag appears in the validation workspace header, not on the landing page. Demo patient display names are reproducible fictional Kenyan-style combinations generated in the browser from a `SYN-nnnnnn` patient reference. Older synthetic rows without that reference use a stable display-only fallback derived from the claim reference. Names are not saved with claim versions or included in version fingerprints. The Add Claim form generates a synthetic reference and does not collect a patient name.
+
+The current validation-to-desk mapping is:
+
+| Rule | Desk / claim type | Trigger |
+| --- | --- | --- |
+| `MISSING_PARTOGRAPH` | Maternity claims desk | Maternity department or diagnosis O80/O82, with delivery/labour indicators; checks `partograph_id`. |
+| `IMPLAUSIBLE_FREQUENCY` | Renal claims desk | Renal department and `sessions_this_week > 3`; warning only, an internal review flag rather than a SHA limit. |
+| `MISSING_POSTOP_NOTES` | Surgical claim type | Surgical department, `overnight_stay=true`, and empty `postop_notes_attached`; there is no Surgical demo desk role. |
+
+Outpatient has no department-specific automated rule. Lab and pharmacy are shown as read-only supporting-item status in the desk workspace, not as separate roles. Every checklist is a **draft to be confirmed with the desk officers** before a facility pilot.
+
+### Reading the repository docs
+
+This README describes the current branch workflow. [INSURANCE_OFFICER_BRIEF.md](INSURANCE_OFFICER_BRIEF.md) is a short presentation summary. [HAKIKI_ARCHITECTURE_AND_CHANGES.md](HAKIKI_ARCHITECTURE_AND_CHANGES.md) is a historical inspection captured on 2026-11-01; it predates the Oracle repository, demo desk roles, synthetic display-name helper, and submitted-claim lifecycle updates. Do not use it as the current implementation reference.
 
 
 > **"Helping healthcare providers submit better claims before they become reimbursement delays."**
 
-Hakiki is an AI-powered Claims Intelligence Platform that integrates with existing **Hospital Information Systems (HIS)** and healthcare financing platforms such as **openIMIS** to improve the quality of healthcare claims before submission.
+Hakiki is a claims-preparation prototype for hospital departments. It demonstrates deterministic pre-submission checks, Gemini-assisted explanations, department-owned claim workspaces, and FHIR response generation. It includes a mock mode; a live HIS/openIMIS connection requires configuration and an approved integration path.
 
-Rather than replacing existing hospital systems, Hakiki acts as an intelligent decision-support layer between claim preparation and claim submission. It validates draft claims against healthcare financing rules, identifies inconsistencies, explains issues in plain language, and provides actionable recommendations that help claims officers submit complete, compliant, and high-quality claims.
+Hakiki is intended to complement hospital systems rather than replace them. It helps staff identify inconsistencies, explain flagged items, and prepare a claim for the facility's submission workflow. It does not guarantee acceptance or payment.
 
 The name **Hakiki**, meaning **"verify"** or **"confirm"** in Swahili, reflects our mission: ensuring that every claim is as accurate, complete, and reimbursement-ready as possible before entering the payer review process.
 
@@ -92,7 +112,7 @@ Hakiki here is a **rule-based engine**, not a black-box classifier. Every score 
 [ React Dashboard ]
         │
         ▼ (Select / edit a claim)
-[ FastAPI Validation Engine ] ──► [ 7 Deterministic SHA Rules ]
+[ FastAPI Validation Engine ] ──► [ 10 Deterministic Rules ]
         │                                   │
         │                                   ▼ (score + pass/fail per rule)
         │                         [ Gemini API — Plain-English Explainer ]
@@ -100,17 +120,17 @@ Hakiki here is a **rule-based engine**, not a black-box classifier. Every score 
 [ Score Gauge · Error Cards · Corrections ] ◄┘
         │
         ▼ (All errors resolved)
-[ FHIR R4 ClaimResponse ] ──► [ openIMIS Core ]
+[ FHIR-shaped ClaimResponse ] ──► [ configured openIMIS client; live payer delivery is not enabled in Oracle demo mode ]
 ```
 
 ### The step-by-step flow
 
-1. **Draft / fetch** — The dashboard loads a claim, either from mock data or a live openIMIS FHIR `Claim` bundle.
-2. **Rule pass** — Seven deterministic rules run against the claim: required fields, ICD-10 format, visit date sanity, item/service codes, coverage window, amount-vs-items match, and amount-reasonableness thresholds.
+1. **Receive** — The dashboard loads demo data from the configured repository. Oracle mode is restricted to synthetic claims; live openIMIS ingestion is disabled in this mode.
+2. **Rule pass** — Ten deterministic rules run: seven core checks (required fields, diagnosis-code format, visit date, items/service codes, coverage window, amount-vs-items match, and amount reasonableness) plus three department-specific checks (maternity partograph, renal session frequency, and surgical post-op notes).
 3. **Score** — Each failed rule deducts points (errors −20, warnings −10) off a base of 100, producing a color-coded status: 🟢 Ready · 🟡 Needs Review · 🔴 High Risk.
 4. **Explain** — Every error is batched into a single Gemini API call that returns a short, non-technical explanation and fix suggestion per rule.
-5. **Correct & re-validate** — The clerk edits flagged fields inline; the claim is re-scored instantly, no resubmission needed.
-6. **Submit** — Once all *errors* (not warnings) clear, a FHIR R4 `ClaimResponse` is built and POSTed to openIMIS — or held in mock mode until credentials are live.
+5. **Correct & re-validate** — The desk saves edits as a new version and runs checks on the saved data. The claim stays stale until revalidated.
+6. **Submit** — A FHIR-shaped `ClaimResponse` can be prepared. In Oracle demo mode, Submit records a demo workflow action; it does not send the claim to SHA or a live openIMIS payer.
 
 ---
 
@@ -118,35 +138,15 @@ Hakiki here is a **rule-based engine**, not a black-box classifier. Every score 
 
 ```
 claimsense/
-├── .env
-├── .gitignore
-├── backend/
-│   ├── main.py                   ← FastAPI app, all routes
-│   ├── config.py                 ← env var loader (mock vs. live mode)
-│   ├── requirements.txt
-│   ├── data/
-│   │   └── mock_claims.py        ← 5 realistic SHA claims
-│   ├── validation/
-│   │   ├── rules.py               ← 7 rule functions
-│   │   └── engine.py              ← runs rules, computes score
-│   ├── fhir/
-│   │   ├── client.py              ← openIMIS FHIR HTTP client
-│   │   └── builder.py             ← builds ClaimResponse resource
-│   ├── llm/
-│   │   └── explainer.py           ← Gemini plain-English explanations
-│   └── tests/
-│       └── test_validation.py
-└── frontend/
-    ├── package.json
-    └── src/
-        ├── App.jsx
-        ├── api/client.js
-        └── components/
-            ├── ClaimList.jsx
-            ├── ValidationPanel.jsx
-            ├── ScoreGauge.jsx
-            ├── ErrorCard.jsx
-            └── StatusBadge.jsx
+├── backend/main.py               FastAPI routes and lifecycle workflows
+├── backend/validation/           deterministic rules and score calculation
+├── backend/db/                   Redis/Oracle repositories and Oracle schema
+├── backend/audit/                hash-linked ledger and manual Avalanche anchoring
+├── backend/fhir/                 FHIR-shaped output and openIMIS HTTP client
+├── backend/llm/                  optional Gemini explanations
+├── backend/tests/                backend unit and API tests
+├── scripts/                      synthetic data and manually-run DB utilities
+└── frontend/src/                 React UI, queue, claim tabs, and display helpers
 ```
 
 ---
@@ -157,28 +157,28 @@ claimsense/
 
 - Python 3.10+
 - Node.js v18+
-- An Gemini API key (for plain-English explanations — optional, falls back gracefully)
-- Access to a local openIMIS Docker stack (optional — the app runs entirely on mock data without it)
+- A Gemini API key for optional explanations; validation works without it.
+- Oracle credentials only if choosing Oracle mode. Default local mode does not require Oracle or openIMIS.
 
 ### Installation & Local Setup
 
 **1. Clone and enter the project**
 
 ```bash
-git clone https://github.com/Linnnetteseven/openimis-dist_dkr.git
-cd openimis-dist_dkr/claimsense
+git clone https://github.com/Linnnetteseven/claimsense.git
+cd claimsense
 ```
 
 **2. Configure environment variables**
 
-Create a `.env` file at the project root:
+Create a `.env` file at the project root for backend settings:
 
 ```env
-OPENIMIS_URL=https://localhost
-OPENIMIS_TOKEN=            # leave blank to run on mock data
-GEMINI_API_KEY=your_key_here
-DEBUG=true
+DB_BACKEND=redis
+GEMINI_API_KEY=            # optional
 ```
+
+The frontend defaults to `http://localhost:8001`. If the API uses another URL, set `VITE_API_URL` in `frontend/.env` (Vite reads frontend environment files from the frontend project root).
 
 **3. Set up the backend**
 
@@ -187,7 +187,7 @@ cd backend
 python3 -m venv venv
 .\venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-pytest tests/ -v              # 24 tests should pass
+python -m pytest -q
 uvicorn main:app --reload --port 8001
 ```
 
@@ -215,12 +215,12 @@ curl http://localhost:8001/
 
 ## 🧠 The Validation Engine
 
-ClaimSense scores claims using **seven transparent, deterministic rules** — no training data, no drift, no model to retrain when SHA policy changes. Just code you can read in five minutes.
+Hakiki scores claims using **ten transparent, deterministic rules** (seven core checks plus three department-specific checks) — no training data, no drift, no model to retrain when SHA policy changes. Just code you can read in five minutes.
 
 | Rule | Checks | Severity |
 |---|---|---|
 | Required Fields | Patient ID, facility code, visit date, diagnosis code present | 🔴 Error |
-| ICD-10 Format | Diagnosis code matches valid ICD-10 structure | 🔴 Error |
+| Diagnosis Format | Diagnosis code matches configured ICD-10/ICD-11 shape; this is not a code-set lookup | 🔴 Error |
 | Visit Date | Not malformed, not in the future | 🔴 Error |
 | Items Present | At least one item with a valid service code and quantity | 🔴 Error |
 | Coverage Active | Patient's SHA coverage hadn't expired on the visit date | 🔴 Error |
@@ -235,6 +235,91 @@ Scores translate into three tiers:
 
 ---
 
+## 🏥 Department-owned claim processing
+
+The demo assigns each claim to an owning department, where that department's staff process it:
+
+- Department checklists support required/optional steps, evidence references, progress, and processing sign-off.
+- The selected demo desk filters the queue in the frontend. It is not login security or permission enforcement.
+- Claims staff can record submitted, queried, rejected, resubmitted, paid, or other outcomes and categorize query/rejection themes.
+- Outcome summaries show recurring themes from the configured repository (or local browser fallback when the API is unavailable).
+
+With the default `DB_BACKEND=redis` mode, checklist and outcome details continue to use browser local storage, preserving the current demo workflow. In `DB_BACKEND=oracle` mode, they are loaded from and saved to Oracle; local storage remains an offline fallback and a cache. Department login and server-enforced access rules are not implemented. Department actions send a fingerprint and limited action metadata to the backend audit ledger; the typed reviewer name is not a verified login identity. See [PILOT_ROADMAP.md](PILOT_ROADMAP.md) for the phased plan.
+
+### Claim lifecycle fingerprints
+
+On first intake, Hakiki fingerprints the claim version and records a `claim_received` event. A saved correction records a new version fingerprint and changed field names, then reruns validation against the corrected data. Current event type names are `claim_received`, `validation`, `claim_corrected` / `claim_correction_started`, the department action names such as `department_signed_off`, `submission`, and `claim_outcome_recorded`. These cover received, validated, correction, sign-off, submission, and outcome actions; no additional event type is needed for those stages. The Audit Trail compares the current server-side claim with its latest version fingerprint and shows whether that version falls inside a batch verified on Avalanche Fuji. In Redis mode, older claim bodies are not retained as version snapshots; Oracle mode retains append-only snapshots in `claim_versions`.
+
+Claim data and department evidence are never written to the blockchain. With the default Redis mode, the legacy Upstash ledger stores claim IDs and workflow metadata; without Upstash it is process-local. Oracle mode stores claim bodies and append-only versions in `claims` and `claim_versions`, and stores only random claim references, event types, payload hashes, and chain hashes in `audit_ledger`. Oracle mode is synthetic-demo-only in this build; live openIMIS ingestion is rejected. Do not connect real patient data. Historical anchors from the old Redis chain are preserved as legacy references during migration, but the Oracle chain is privacy-safe and must be anchored again to create Oracle-chain checkpoints. New Oracle ledger entries use hash version 4: the exact canonical hash input is saved in `audit_event_details` with the event so verification does not have to reconstruct it from Oracle-formatted columns. Older v2/v3 records remain verifiable with their original algorithms.
+
+### Oracle Autonomous Database (optional)
+
+The default remains Redis/in-process behavior. Set `DB_BACKEND=oracle` only when you deliberately want claims, claim versions, validation runs, department checklist/sign-off state, outcomes, and the privacy-safe audit ledger in Oracle Autonomous Database. `DB_BACKEND=oracle_with_fallback` uses Oracle while available and switches to the existing Redis behavior after an Oracle failure; fallback writes can split across stores, so use it for demos rather than as a consistency guarantee.
+
+1. Create an application database user in Autonomous Database. Choose either walletless TLS or wallet-based mTLS. Walletless TLS avoids wallet download, but TLS must be enabled on the database and your client IP must be permitted by its network access rules. Oracle documents both Python connection options [here](https://docs.oracle.com/en/cloud/paas/autonomous-database/serverless/adbsb/connecting-python.html).
+2. Apply [backend/db/schema.sql](backend/db/schema.sql) once in APEX SQL Workshop or SQL Developer using the application schema user. It includes the lifecycle columns, pending/confirmed/failed anchor fields, and the verification checkpoint table.
+3. Set `DB_BACKEND=oracle` and fill `ORACLE_USER`, `ORACLE_PASSWORD`, and `ORACLE_DSN` in the repo-root `.env`. For **walletless TLS**, enable TLS for the Autonomous Database, then copy the TLS connection string from its Database Connection page into `ORACLE_DSN`; leave `ORACLE_WALLET_DIR` and `ORACLE_WALLET_PASSWORD` blank. For **wallet mTLS**, use the wallet's TNS alias for `ORACLE_DSN`, set `ORACLE_WALLET_DIR` to its extracted folder, and set `ORACLE_WALLET_PASSWORD`. Never commit `.env` or wallet files.
+4. Install the backend requirements and start FastAPI as usual. Check `GET /health/db`; it reports `connection_mode` as `walletless_tls`, `wallet_mtls`, or `redis`, alongside connectivity, and never returns credentials.
+
+For a schema created before these changes, run the matching migrations manually as the application schema user: `backend/apply_lifecycle_migration.py`, `backend/apply_anchors_migration.py`, and [`scripts/migrate_audit_verification_checkpoint.sql`](scripts/migrate_audit_verification_checkpoint.sql). The anchor rollback script is [`scripts/migrate_anchors_status_rollback.sql`](scripts/migrate_anchors_status_rollback.sql); it refuses to run if any anchor has a null transaction hash and does not undo an on-chain transaction. Do not run migrations on a production schema without a reviewed backup and change window.
+
+For an existing Oracle schema that already has the anchors status migration, apply [`scripts/migrate_audit_verification_checkpoint.sql`](scripts/migrate_audit_verification_checkpoint.sql) once. Then open a claim's Audit tab and run **Verify full ledger**. That stores the verified sequence and hash; later anchor requests verify only the suffix after that checkpoint. The full verification is manual and may take time on a remote database. The app never sends an Avalanche transaction during that verification.
+
+Example from PowerShell at the repository root:
+
+```powershell
+.\backend\venv\Scripts\Activate.ps1
+cd backend
+python -m pip install -r requirements.txt
+python -m uvicorn main:app --reload --port 8001
+```
+
+The app seeds the existing synthetic mock claims into an empty Oracle claims table on the first `GET /claims`. Corrections are saved as new versions in the same transaction as their audit event. Department checklist state and outcome records use the Oracle endpoints; if the API is unavailable, the frontend keeps the existing local browser copy.
+
+#### Migrate the Upstash ledger once
+
+With a verified, non-empty Upstash ledger and a clean Oracle schema, set the Redis and Oracle variables from `.env`, set `DB_BACKEND=oracle`, and run from the repository root:
+
+```powershell
+python scripts/migrate_redis_to_oracle.py
+```
+
+The script verifies Redis before writing, refuses a non-empty Oracle target, re-chains entries using payload digests and random references, then verifies the copied chain. It does not delete or modify Redis. Since the old chain hashed full event payloads (including claim IDs), the Oracle chain has different hashes; old Avalanche anchors are retained in `legacy_anchors` for reference and do not verify the new chain. After migration, manually anchor the Oracle chain again. Only seeded synthetic claims are migrated into the claims tables; old in-memory corrections and claims cannot be recovered after their backend process has exited.
+
+The Oracle feature has no authentication or departmental authorization yet and is not suitable for real patient data or a live hospital pilot. Keep demo inputs synthetic, restrict database network access, and use a least-privilege application user rather than the Autonomous Database ADMIN account. Walletless TLS still uses encrypted TLS and database username/password credentials, but requires TLS to be enabled and the caller's IP to be allowed by the database ACL.
+
+#### Synthetic workload and Management Overview
+
+The optional seeder creates 250 synthetic claim records for **Kerugoya Level 5 Hospital**, dated across the prior 12 weeks. The department mix is 60% Outpatient, 20% Renal, and 20% Maternity. Patient IDs use `SYN-nnnnnn` and claim references use `SYN-CLM-nnnnnn`; the display names are generated by the frontend and never persisted. Automated validation groups target 55% Ready, 30% Needs Review, and 15% Blocked. About one-third show an earlier, lower-scoring validation followed by a correction and revalidation. These are workflow examples, not SHA rules or real facility data. The seeder writes through repository correction, validation, version, and ledger functions, and requires a clean full-ledger preflight before any write. It refuses Redis mode.
+
+Apply `backend/db/schema.sql` and then `backend/db/views.sql` as `HAKIKI_APP`. The views in `views.sql` are the shared source for the Management Overview metrics. Preview an existing synthetic workload refresh, then apply it through the normal write path. Use the backend virtual environment from the repo root:
+
+```powershell
+$env:DB_BACKEND = "oracle"
+backend\venv\Scripts\python.exe scripts/seed_synthetic_claims.py --count 250
+backend\venv\Scripts\python.exe scripts/seed_synthetic_claims.py --count 250 --reseed --preview
+backend\venv\Scripts\python.exe scripts/seed_synthetic_claims.py --count 250 --reseed
+```
+
+Run these from the repository root; if your shell is already there, use `backend\venv\Scripts\python.exe` as shown. `--reseed` writes new claim versions for existing, non-submitted synthetic references, then writes current-rule validation runs and verifies the full ledger. Submitted rows are skipped to preserve the lock. If preflight fails, no claim changes are written. Do not run the seeder against a database containing real claims. The Management Overview tab is read-only and shows a Redis-mode explanation when Oracle is not selected.
+
+#### Evidence packs
+
+The Audit Trail can export a minimized JSON pack and PDF summary for synthetic-reference claims only. `EVIDENCE_STORAGE=local` is the default; files go under `EVIDENCE_DIR` (default `./evidence_packs/`), which is ignored by Git. The pack contains versions/fingerprints, validation summaries, department sign-off status, hash-chain entries, and any related anchor transaction references; it excludes the claim body and staff note text. OCI object upload is not enabled in this build, so `EVIDENCE_STORAGE=oci` safely falls back to local storage with a response message. Do not publish generated packs unless you have reviewed their contents and destination.
+
+#### Experimental Oracle Select AI
+
+`POST /analytics/ask` is disabled unless `ENABLE_SELECT_AI=true`. It requires an Autonomous Database Select AI provider credential/profile and a separate `HAKIKI_ANALYTICS` database account. Apply `backend/db/views.sql` first, then follow the ordered steps/comments in `scripts/select_ai_setup.sql`: an administrator creates the reader and grants SELECT only on the aggregate views; the reader configures the Select AI profile with an explicit view `object_list`. Set `ORACLE_SELECT_AI_USER`, `ORACLE_SELECT_AI_PASSWORD`, and the regular Oracle DSN/wallet settings for the service. The endpoint asks Oracle for SQL, rejects non-SELECT or unapproved relations, and executes as the view-only reader; it does not run as `HAKIKI_APP`. Keep it disabled if the provider/profile is unavailable. Provider credentials and supported models depend on the OCI setup, and Select AI may not be available on the Autonomous Database Free tier. No live provider call is part of local tests.
+
+### Showcase deployment
+
+The frontend and FastAPI backend should be deployed as separate Vercel projects for a quick preview. The frontend project uses `frontend` as its root, `npm run build` as its build command, and `dist` as its output directory. Set `VITE_API_URL` to the public backend URL. The backend project uses `backend` as its root (the existing `backend/vercel.json` routes requests to FastAPI); set `DEPLOYED_FRONTEND_URL` or include the frontend URL in `ALLOWED_ORIGINS`.
+
+If the original GitHub owner has not granted repository access, deploy the local checkout with Vercel CLI from each project directory after signing in to your own Vercel account; this uploads the local source without pushing to the owner's repository. Use Vercel's Secret environment-variable type for `GEMINI_API_KEY`, `UPSTASH_REDIS_REST_TOKEN`, `ANCHOR_PRIVATE_KEY`, and `ANCHOR_API_SECRET`. Keep `VITE_API_URL` public because it is embedded in the frontend build. Add backend environment values in Vercel's project settings and redeploy after changing them.
+
+For a public preview, keep openIMIS credentials unset so the app stays in mock mode, use only synthetic claims, and use a Fuji-only wallet if enabling anchoring. Redis mode still keeps new claims/corrections in process memory; Oracle mode persists them but must be configured with the Oracle variables above. Vercel CLI supports deploying from source without connecting the owner&apos;s Git repo; see [Vercel FastAPI deployment](https://vercel.com/docs/frameworks/backend/fastapi), [Vercel CLI deployment](https://vercel.com/docs/cli/deploying-from-cli), and [Vercel environment variables](https://vercel.com/docs/environment-variables).
+
+OpenIMIS/FHIR remains part of the project's winning hackathon interoperability path. A Kerugoya deployment still needs a facility/HMIS integration plan and the DHA-approved route into the national HIE.
 ## 🎯 Hackathon Track Focus
 
 ClaimSense was built for the **openIMIS Hackathon — Track 3 (Claims Management)**. By optimizing point-of-entry accuracy instead of chasing rejections after the fact, it targets the evaluation criteria around interoperability (FHIR R4), administrative cost reduction, and system reliability — with a validation core simple enough to demo, test, and trust on stage.
@@ -247,3 +332,13 @@ ClaimSense was built for the **openIMIS Hackathon — Track 3 (Claims Management
 - [ ] Facility-level analytics on common rejection causes
 - [ ] Coverage lookups via the openIMIS `Coverage` FHIR endpoint
 - [ ] Responsible AI section documenting Gemini's role (explanation only — never adjudication)
+
+
+### OCR status
+
+Paper claim upload is simulated in the frontend with fixed sample extracted fields; no OCR engine processes the document.
+
+
+### Optional Avalanche Fuji audit anchoring
+
+Anchoring is a separate manual action from claim validation. Configure `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` for the ledger, then set `AVAX_RPC_URL` (defaults to Fuji C-Chain), `ANCHOR_CONTRACT_ADDRESS`, `ANCHOR_PRIVATE_KEY`, `CHAIN_ID=43113`, and `ANCHOR_API_SECRET`. The signing key must belong to the deployed contract owner; use a dedicated Fuji-only wallet and never commit or share its private key. The UI requests the API secret when manually anchoring. If RPC or signer setup is unavailable, normal mock and validation flows continue. Only a SHA-256 digest of the sequence range and ledger head is sent on-chain; claim contents stay in the ledger.

@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client.js";
+import { formatSavedTime, readClaimsCache, retryDelayMs, writeClaimsCache } from "../utils/claimsCache.js";
 
 const DEFAULT_MOCK_CLAIM = {
-  id: "SHA-CLM-90210",
-  patient_name: "Jane Doe",
-  patient_id: "PT-88301-SHA",
-  facility_name: "Equity Afia Clinic",
+  id: "SYN-CLM-000001",
+  is_synthetic: true,
+  patient_id: "SYN-000001",
+  facility_name: "Kerugoya Level 5 Hospital",
+  department: "outpatient",
   visit_date: "2026-07-02",
   coverage_end_date: "2026-12-31",
   diagnosis_code: "INVALID_CODE",
@@ -26,32 +28,62 @@ const DEFAULT_MOCK_CLAIM = {
  * in place after a (re)validation, without a full network refetch.
  */
 export function useClaims() {
-  const [claims, setClaims] = useState([DEFAULT_MOCK_CLAIM]);
-  const [loading, setLoading] = useState(true);
+  const [claims, setClaims] = useState(() => readClaimsCache()?.claims ?? [DEFAULT_MOCK_CLAIM]);
+  const [savedAt, setSavedAt] = useState(() => readClaimsCache()?.savedAt ?? null);
+  const [loading, setLoading] = useState(() => !readClaimsCache());
   const [error, setError] = useState(null);
+  const [offline, setOffline] = useState(false);
+  const [retryAttempt, setRetryAttempt] = useState(0);
+  const requestRef = useRef(null);
 
   const load = useCallback(async () => {
+    if (requestRef.current) return requestRef.current;
     setLoading(true);
-    setError(null);
-    try {
-      const data = await api.getClaims();
-      // Ensure our default test mock claim is always present at the top
-      const loadedClaims = data.claims ?? [];
-      const hasMock = loadedClaims.some((c) => c.id === DEFAULT_MOCK_CLAIM.id);
-      setClaims(hasMock ? loadedClaims : [DEFAULT_MOCK_CLAIM, ...loadedClaims]);
-      return data.claims ?? [];
-    } catch (err) {
-      // In case of error (e.g. backend offline), fall back to our mock claim list
-      setClaims([DEFAULT_MOCK_CLAIM]);
-      return [DEFAULT_MOCK_CLAIM];
-    } finally {
-      setLoading(false);
-    }
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 12_000);
+    const request = (async () => {
+      try {
+        const data = await api.getClaims({}, { signal: controller.signal });
+        const loadedClaims = data.claims ?? [];
+        const savedTime = writeClaimsCache(loadedClaims);
+        setClaims(loadedClaims);
+        setSavedAt(savedTime);
+        setError(null);
+        setOffline(false);
+        setRetryAttempt(0);
+        return loadedClaims;
+      } catch {
+        const cached = readClaimsCache();
+        const fallbackClaims = cached?.claims ?? [DEFAULT_MOCK_CLAIM];
+        setClaims(fallbackClaims);
+        setSavedAt(cached?.savedAt ?? null);
+        setOffline(Boolean(cached));
+        setError(cached
+          ? `Database slow / unreachable. Offline: showing data saved at ${formatSavedTime(cached.savedAt)}.`
+          : "Database slow / unreachable. Showing the built-in offline demo claim; it is not synced with Oracle.");
+        setRetryAttempt((attempt) => attempt + 1);
+        return fallbackClaims;
+      } finally {
+        window.clearTimeout(timeout);
+        setLoading(false);
+        requestRef.current = null;
+      }
+    })();
+    requestRef.current = request;
+    return request;
   }, []);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  // Recover automatically while offline. Back off from 15s to at most 60s.
+  useEffect(() => {
+    if (!error) return undefined;
+    const delay = retryDelayMs(retryAttempt);
+    const timer = window.setTimeout(() => { load(); }, delay);
+    return () => window.clearTimeout(timer);
+  }, [error, load, retryAttempt]);
 
   /**
    * Submit a new claim to the backend and, on success, insert it into local
@@ -100,6 +132,14 @@ export function useClaims() {
     );
   }, []);
 
-  return { claims, loading, error, reload: load, patchPreview, addClaim };
+  const markNeedsRevalidation = useCallback((claimId) => {
+    setClaims((previous) => previous.map((claim) => claim.id === claimId ? {
+      ...claim,
+      _lifecycle: { ...(claim._lifecycle || {}), status: "needs_revalidation" },
+      _preview: { ...(claim._preview || {}), status: "Needs revalidation", color: "amber" },
+    } : claim));
+  }, []);
+
+  return { claims, loading, error, offline, savedAt, reload: load, patchPreview, markNeedsRevalidation, addClaim };
 }
 
