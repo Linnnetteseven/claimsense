@@ -159,7 +159,7 @@ export default function App() {
             <img src="/favicon.png" alt="" className="h-7 w-7 object-contain" />
             <span className="text-2xl font-black tracking-tight text-teal-800 dark:text-teal-400">Hakiki</span>
           </button>
-          <span className="hidden rounded-full border border-slate-300 px-2.5 py-1 text-[11px] font-semibold text-slate-700 dark:border-slate-700 dark:text-slate-200 sm:inline-flex">Demo environment: synthetic data</span>
+          {view === "dashboard" && !managerOnly && <span className="inline-flex whitespace-nowrap rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">Demo environment: synthetic data</span>}
         </div>
         <div className="flex flex-wrap items-center justify-end gap-1.5 sm:gap-2">
           <PrivacyToggle enabled={privacyMode} onToggle={() => setPrivacyMode((enabled) => !enabled)} />

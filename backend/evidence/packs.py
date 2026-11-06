@@ -11,6 +11,14 @@ import secrets
 logger = logging.getLogger(__name__)
 
 
+def evidence_pack_safety_error(claim: dict) -> str | None:
+    """Eligibility uses the persisted synthetic flag and fake reference only."""
+    reference = str(claim.get("patient_id") or "")
+    if claim.get("is_synthetic") is not True or not re.fullmatch(r"SYN-[0-9]{6}", reference):
+        return "Evidence packs are available only for synthetic-reference claims"
+    return None
+
+
 def _pdf_escape(text: str) -> str:
     safe = text.encode("ascii", "replace").decode("ascii")
     return safe.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
@@ -37,7 +45,8 @@ def build_pdf_summary(pack: dict) -> bytes:
         "Validation history (version / score / status):",
     ]
     lines.extend(f"v{run.get('version')} / {run.get('score')} / {run.get('status')}" for run in runs)
-    lines.extend(["", "Ledger commitments are fingerprints; claim contents are not included."])
+    lines.extend(["", "Ledger commitments are fingerprints; claim contents are not included.",
+                  "Demo environment: synthetic data"])
     commands = ["BT", "/F1 10 Tf", "50 780 Td", "14 TL"]
     commands.extend(f"({_pdf_escape(str(line))}) Tj T*" for line in lines[:48])
     commands.append("ET")

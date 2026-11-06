@@ -3,9 +3,9 @@ import { api } from "../api/client.js";
 import { formatSavedTime, readClaimsCache, retryDelayMs, writeClaimsCache } from "../utils/claimsCache.js";
 
 const DEFAULT_MOCK_CLAIM = {
-  id: "SHA-CLM-90210",
-  patient_name: "Jane Doe",
-  patient_id: "PT-88301-SHA",
+  id: "SYN-CLM-000001",
+  is_synthetic: true,
+  patient_id: "SYN-000001",
   facility_name: "Kerugoya Level 5 Hospital",
   department: "outpatient",
   visit_date: "2026-07-02",
@@ -132,6 +132,14 @@ export function useClaims() {
     );
   }, []);
 
-  return { claims, loading, error, offline, savedAt, reload: load, patchPreview, addClaim };
+  const markNeedsRevalidation = useCallback((claimId) => {
+    setClaims((previous) => previous.map((claim) => claim.id === claimId ? {
+      ...claim,
+      _lifecycle: { ...(claim._lifecycle || {}), status: "needs_revalidation" },
+      _preview: { ...(claim._preview || {}), status: "Needs revalidation", color: "amber" },
+    } : claim));
+  }, []);
+
+  return { claims, loading, error, offline, savedAt, reload: load, patchPreview, markNeedsRevalidation, addClaim };
 }
 

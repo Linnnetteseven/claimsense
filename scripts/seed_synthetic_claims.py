@@ -25,34 +25,39 @@ load_dotenv(ROOT / ".env")
 from audit.chain import verify_records  # noqa: E402
 from db.factory import configured_backend, get_repository  # noqa: E402
 from validation.engine import validate  # noqa: E402
+from validation.rules import RULES_DATE, RULES_VERSION  # noqa: E402
 
-FACILITY = "Kerugoya County Referral Hospital (SYNTHETIC DEMO)"
-DEPARTMENTS = ("outpatient", "inpatient", "maternity", "laboratory", "pharmacy", "radiology", "surgical")
+FACILITY = "Kerugoya Level 5 Hospital"
+# Draft demo mix: outpatient is the majority, with renal and maternity claims.
+DEPARTMENTS = ("outpatient", "outpatient", "outpatient", "renal", "maternity")
 DIAGNOSES = {
     "outpatient": ("J18.9", "E11.9", "K29.7", "I10"),
-    "inpatient": ("J18.9", "K35.8", "E11.9", "N39.0"),
     "maternity": ("O80", "O82", "O26.9", "O99.0"),
-    "laboratory": ("D64.9", "E11.9", "N18.6", "J18.9"),
-    "pharmacy": ("E11.9", "I10", "J18.9", "K59.0"),
-    "radiology": ("S09.9", "J18.9", "K35.8", "M54.5"),
-    "surgical": ("K35.8", "K40.9", "S52.5", "N20.0"),
+    "renal": ("N18.6", "Z49.1", "N18.5", "I12.0"),
 }
 SERVICE_CODES = {
-    "outpatient": "SYN-OPD-CONSULT", "inpatient": "SYN-IPD-CARE",
-    "maternity": "SYN-MAT-DELIVERY", "laboratory": "SYN-LAB-CBC",
-    "pharmacy": "SYN-PHARM-DISPENSE", "radiology": "SYN-RAD-IMAGE",
-    "surgical": "SYN-SURG-PROCEDURE",
+    "outpatient": "SYN-OPD-CONSULT", "maternity": "SYN-MAT-DELIVERY",
+    "renal": "SYN-REN-DIALYSIS",
 }
+
+
+def _validate_current(claim: dict) -> dict:
+    result = validate(claim)
+    result.update({"rules_version": RULES_VERSION, "rules_date": RULES_DATE})
+    return result
+
+
+def _status_bucket(status: str) -> str:
+    return {"Ready for Submission": "ready", "Needs Review": "review"}.get(status, "blocked")
 
 
 def _baseline(index: int, department: str, received: date, rng: random.Random) -> dict:
     patient_ref = f"SYN-{index:06d}"
     maternity = department == "maternity"
-    surgical = department == "surgical"
     amount = rng.randrange(1800, 12500, 100)
     claim = {
         "id": f"SYN-CLM-{index:06d}", "is_synthetic": True,
-        "patient_id": patient_ref, "patient_name": f"Synthetic patient {patient_ref}",
+        "patient_id": patient_ref,
         "facility_code": "KRG-L5-SYN", "facility_name": FACILITY,
         "department": department, "visit_date": received.isoformat(),
         "diagnosis_code": rng.choice(DIAGNOSES[department]),
@@ -66,8 +71,8 @@ def _baseline(index: int, department: str, received: date, rng: random.Random) -
     }
     if maternity:
         claim.update({"partograph_id": f"SYN-PARTO-{index:06d}", "is_delivery": True})
-    if surgical:
-        claim.update({"overnight_stay": True, "postop_notes_attached": f"SYN-POSTOP-{index:06d}"})
+    if department == "renal":
+        claim["sessions_this_week"] = 2 + (index % 3)
     return claim
 
 
@@ -119,21 +124,51 @@ def _initial_rework_version(final_claim: dict) -> dict:
     return initial
 
 
-def seed_repository(repository, total: int = 250, seed: int = 20261104, today: date | None = None) -> dict:
-    """Idempotently append new synthetic claims and their audit events."""
+def seed_repository(repository, total: int = 250, seed: int = 20261104, today: date | None = None,
+                    reseed: bool = False, apply: bool = True) -> dict:
+    """Seed or refresh synthetic claims through normal repository write paths."""
+    preflight = verify_records(repository.all_ledger_records())
+    if not preflight.get("verified"):
+        raise RuntimeError(f"Ledger preflight failed at record {preflight.get('broken_at')}; no claims were changed")
+    print("Ledger preflight verified; synthetic claim writes may proceed.", flush=True)
     existing = {str(c.get("id")): c for c in repository.list_claims()}
     claims = generate_claims(total=total, seed=seed, today=today)
-    added = 0
+    added = updated = skipped_locked = 0
+    status_counts = {"ready": 0, "review": 0, "blocked": 0}
+    print(f"Found {sum(bool(c.get('is_synthetic')) for c in existing.values())} synthetic claims; processing {total} target references.", flush=True)
     for index, final_claim in enumerate(claims, 1):
         claim_id = final_claim["id"]
         if claim_id in existing:
             if not existing[claim_id].get("is_synthetic"):
                 raise ValueError(f"Refusing to overwrite non-synthetic claim {claim_id}")
+            if not reseed:
+                continue
+            if not apply:
+                updated += 1
+                continue
+            old_claim = repository.get_claim(claim_id) or existing[claim_id]
+            lifecycle = old_claim.get("_lifecycle") or {}
+            if str(lifecycle.get("status") or "").lower() == "submitted":
+                skipped_locked += 1
+                continue
+            final_claim.pop("_seed_group", None)
+            final_claim["id"] = claim_id
+            final_claim["_corrected_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            repository.record_claim_correction(claim_id, old_claim, final_claim)
+            final_claim.pop("_corrected_at", None)
+            result = _validate_current(final_claim)
+            repository.record_validation(claim_id, final_claim, result)
+            status_counts[_status_bucket(result["status"])] += 1
+            updated += 1
+            if updated % 25 == 0:
+                print(f"Updated {updated} synthetic claims; ledger writes are continuing.", flush=True)
+            continue
+        if not apply:
             continue
         group = final_claim.pop("_seed_group")
         initial = _initial_rework_version(final_claim) if index % 3 == 0 else final_claim
         repository.create_claim(initial)
-        first_result = validate(initial)
+        first_result = _validate_current(initial)
         received_at = datetime.fromisoformat(initial["_created_at"])
         first_result["recorded_at"] = (received_at + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
         repository.record_validation(claim_id, initial, first_result)
@@ -142,11 +177,12 @@ def seed_repository(repository, total: int = 250, seed: int = 20261104, today: d
             final_claim["_corrected_at"] = corrected_at.strftime("%Y-%m-%dT%H:%M:%SZ")
             repository.record_claim_correction(claim_id, initial, final_claim)
             final_claim.pop("_corrected_at", None)
-            final_result = validate(final_claim)
+            final_result = _validate_current(final_claim)
             final_result["recorded_at"] = (corrected_at + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
             repository.record_validation(claim_id, final_claim, final_result)
         else:
             final_result = first_result
+        status_counts[_status_bucket(final_result["status"])] += 1
         # Different sign-off states, all unmistakably synthetic.
         state = index % 4
         review = {"completedChecks": [], "evidenceReferences": {}, "note": "Synthetic demo review"}
@@ -161,8 +197,11 @@ def seed_repository(repository, total: int = 250, seed: int = 20261104, today: d
     integrity = verify_records(records)
     if not integrity.get("verified"):
         raise RuntimeError(f"Audit chain verification failed at record {integrity.get('broken_at')}")
-    return {"added": added, "existing": len(claims) - added, "total": len(claims),
-            "chain_verified": True}
+    return {"added": added, "updated": updated, "skipped_locked": skipped_locked,
+            "existing": len(claims) - added - updated, "total": len(claims),
+            "ready": status_counts["ready"], "review": status_counts["review"],
+            "blocked": status_counts["blocked"],
+            "preflight_verified": True, "chain_verified": True}
 
 
 def reset_synthetic_rows(repository) -> int:
@@ -189,6 +228,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--reset", action="store_true", help="delete only rows whose claim payload is_synthetic=true")
     parser.add_argument("--count", type=int, default=250)
+    parser.add_argument("--reseed", action="store_true", help="save corrected versions for existing synthetic claims")
+    parser.add_argument("--preview", action="store_true", help="preflight and show intended work without writes")
     args = parser.parse_args()
     if configured_backend() != "oracle":
         parser.error("Set DB_BACKEND=oracle; this seed script must not seed Redis or mock mode")
@@ -196,7 +237,7 @@ def main() -> int:
     if args.reset:
         removed = reset_synthetic_rows(repository)
         print(f"Removed {removed} synthetic claims and their dependent app rows; audit history retained.")
-    print(seed_repository(repository, total=args.count))
+    print(seed_repository(repository, total=args.count, reseed=args.reseed, apply=not args.preview))
     return 0
 
 

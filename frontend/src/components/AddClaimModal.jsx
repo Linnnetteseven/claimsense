@@ -5,8 +5,7 @@ const EMPTY_ITEM = { service_code: "", description: "", quantity: 1, unit_price:
 
 function emptyForm() {
   return {
-    patient_name: "",
-    patient_id: "",
+    patient_id: `SYN-${String(Math.floor(Math.random() * 1_000_000)).padStart(6, "0")}`,
     dob: "",
     gender: "F",
     facility_name: "",
@@ -121,22 +120,13 @@ export default function AddClaimModal({ onClose, onSubmit }) {
               Patient
             </legend>
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Patient name" required>
+              <p className="col-span-2 text-xs text-slate-500 dark:text-slate-400">Synthetic display names are generated for presentation and are not saved with the claim.</p>
+              <Field label="Synthetic patient reference" required>
                 <input
                   required
-                  value={form.patient_name}
-                  onChange={(e) => updateField("patient_name", e.target.value)}
-                  className="input"
-                  placeholder="Grace Wanjiru Njoroge"
-                />
-              </Field>
-              <Field label="Insuree / Patient ID" required>
-                <input
-                  required
+                  readOnly
                   value={form.patient_id}
-                  onChange={(e) => updateField("patient_id", e.target.value)}
-                  className="input"
-                  placeholder="INS-KE-44218"
+                  className="input bg-slate-100 dark:bg-slate-900"
                 />
               </Field>
               <Field label="Date of birth">

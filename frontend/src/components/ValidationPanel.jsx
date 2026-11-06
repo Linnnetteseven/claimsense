@@ -11,6 +11,7 @@ import OutcomeFeedbackTab from "./OutcomeFeedbackTab.jsx";
 import { DEPARTMENT_REVIEW_UPDATED, readDepartmentReview } from "../utils/departmentReview.js";
 import { getOverallStatus } from "../utils/overallStatus.js";
 import { api } from "../api/client.js";
+import { displayPatientName } from "../utils/syntheticName.js";
 
 const OVERALL_RULE_IDS = new Set([
   "MISSING_FIELDS", "INVALID_ICD10", "VISIT_DATE", "EMPTY_ITEMS",
@@ -193,6 +194,7 @@ export default function ValidationPanel({ claim, onValidationComplete, onLifecyc
   const [scanExpanded, setScanExpanded] = useState(false);
   const [extractedData, setExtractedData] = useState(null);
   const privateValue = (value) => privacyMode && value ? "********" : (value ?? "N/A");
+  const patientName = displayPatientName(claim);
   const maskFhirPayload = (payload) => {
     if (!privacyMode || !payload || typeof payload !== "object") return payload;
     const sensitiveKey = /(patient|subject|identifier|name|birth|address|telecom|phone|email|diagnos|condition|service|item|amount|price|date|reference|insurer|payee)/i;
@@ -258,11 +260,11 @@ export default function ValidationPanel({ claim, onValidationComplete, onLifecyc
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0">
               <div className="w-12 h-12 rounded-full bg-teal-50 dark:bg-teal-950/20 border border-teal-100 dark:border-teal-900/30 flex items-center justify-center text-teal-700 dark:text-teal-400 text-lg font-bold shadow-inner shrink-0">
-                {privacyMode ? "**" : claim.patient_name ? claim.patient_name.split(" ").map(n => n[0]).join("") : "PT"}
+                {privacyMode ? "**" : patientName.split(" ").map(n => n[0]).join("")}
               </div>
               <div className="min-w-0">
                 <h2 className="text-lg font-bold text-slate-800 dark:text-slate-100 leading-tight break-words">
-                    {privateValue(claim.patient_name)}
+                    {privateValue(patientName)}
                 </h2>
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-2">
                   {import.meta.env.VITE_SYNTHETIC_LABEL === "full" && claim.is_synthetic && (
@@ -621,7 +623,7 @@ export default function ValidationPanel({ claim, onValidationComplete, onLifecyc
               <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4 text-sm">
                 <div>
                   <span className="text-xs text-slate-500 dark:text-slate-400 block">Full Name</span>
-                  <span className="font-semibold text-slate-800 dark:text-slate-200">{privateValue(claim.patient_name)}</span>
+                  <span className="font-semibold text-slate-800 dark:text-slate-200">{privateValue(patientName)}</span>
                 </div>
                 <div>
                   <span className="text-xs text-slate-500 dark:text-slate-400 block">Policy ID Number</span>

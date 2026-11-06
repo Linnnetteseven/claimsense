@@ -63,7 +63,10 @@ def _load_json(value):
 
 
 def _clean_claim(claim: dict) -> dict:
-    return {key: value for key, value in claim.items() if not str(key).startswith("_")}
+    # Presentation names are generated in the UI and never enter persisted
+    # claim versions or the fingerprints computed from those versions.
+    return {key: value for key, value in claim.items()
+            if not str(key).startswith("_") and key != "patient_name"}
 
 
 def _hash_v3(previous: str, seq: int, claim_ref: str | None, event_type: str, payload_hash: str, timestamp: str) -> str:
@@ -328,9 +331,11 @@ class OracleRepository:
                     return None
                 claim_ref, claim_payload, department = claim_row
                 claim = _load_json(claim_payload)
+                from evidence.packs import evidence_pack_safety_error
+                safety_error = evidence_pack_safety_error(claim)
+                if safety_error:
+                    raise ValueError(safety_error)
                 synthetic_reference = str(claim.get("patient_id") or "")
-                if claim.get("is_synthetic") is not True or not __import__("re").fullmatch(r"SYN-[0-9]{6}", synthetic_reference):
-                    raise ValueError("Evidence packs are available only for synthetic-reference claims")
 
                 cursor.execute(
                     """SELECT version, created_at, version_fingerprint, changed_fields_json

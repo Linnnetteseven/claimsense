@@ -625,13 +625,15 @@ async def create_claim(claim: dict):
     if department not in {"outpatient", "maternity", "renal", "surgical"}:
         raise HTTPException(status_code=422, detail="Choose a valid owning department")
     created = {
-        **claim,
+        **{key: value for key, value in claim.items() if key != "patient_name"},
         "id": claim.get("id") or f"SHA-CLM-DEMO-{uuid.uuid4().hex[:8].upper()}",
         "is_synthetic": True,
         "facility_name": "Kerugoya Level 5 Hospital",
         "facility_code": "KRG-005",
         "department": department,
     }
+    if not re.fullmatch(r"SYN-[0-9]{6}", str(created.get("patient_id") or "")):
+        created["patient_id"] = f"SYN-{uuid.uuid4().int % 1_000_000:06d}"
     repository = get_repository()
     try:
         if is_oracle_active(repository):
@@ -736,7 +738,8 @@ async def correct_claim(claim_id: str, corrections: dict):
         raise _storage_unavailable(exc, "Claim intake could not be recorded") from None
 
     # Merge: original fields overridden by corrections
-    public_corrections = {key: value for key, value in corrections.items() if not str(key).startswith("_")}
+    public_corrections = {key: value for key, value in corrections.items()
+                          if not str(key).startswith("_") and key != "patient_name"}
     updated = {**original, **public_corrections, "id": claim_id}
     try:
         chain.record_claim_correction(claim_id, original, updated)

@@ -7,7 +7,7 @@ import pytest
 BACKEND = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
 
-from evidence.packs import store_evidence_pack
+from evidence.packs import build_pdf_summary, evidence_pack_safety_error, store_evidence_pack
 
 
 def _pack():
@@ -54,3 +54,17 @@ def test_oci_mode_falls_back_to_local_and_says_so(tmp_path, monkeypatch):
 
     assert result["storage"] == "local"
     assert "OCI storage is not enabled" in result["message"]
+
+
+def test_synthetic_eligibility_uses_flag_and_reference_not_display_name():
+    claim = {"is_synthetic": True, "patient_id": "SYN-000123", "patient_name": "Fictional Demo Name"}
+    assert evidence_pack_safety_error(claim) is None
+    assert evidence_pack_safety_error({**claim, "is_synthetic": False})
+    assert evidence_pack_safety_error({**claim, "patient_id": "INS-12345"})
+
+
+def test_evidence_footer_uses_compact_demo_label_and_contains_no_patient_name():
+    pack = _pack()
+    rendered = build_pdf_summary(pack)
+    assert b"Demo environment: synthetic data" in rendered
+    assert b"Fictional Demo Name" not in rendered

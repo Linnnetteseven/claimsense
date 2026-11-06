@@ -62,6 +62,7 @@ def test_new_claim_is_validated_and_versioned_on_receipt(monkeypatch):
     monkeypatch.setattr(main, "explain_errors", lambda _errors, _claim: ({}, False))
     draft = {key: value for key, value in claim.items() if key != "id"}
     draft["department"] = "outpatient"
+    draft["patient_name"] = "Tracy Munene Fictional"
 
     response = client.post("/claims", json=draft)
 
@@ -70,6 +71,9 @@ def test_new_claim_is_validated_and_versioned_on_receipt(monkeypatch):
     claim_id = created["id"]
     assert response.json()["validation"]["rules_version"] == RULES_VERSION
     assert response.json()["validation"]["rules_date"] == RULES_DATE
+    assert "patient_name" not in created
+    assert all("patient_name" not in version["payload"] for version in repository.versions[claim_id])
+    assert all("Tracy Munene Fictional" not in str(event) for event in repository.event_payloads)
     assert len(repository.versions[claim_id]) == 2
     assert repository.validation_runs[-1]["claim_id"] == claim_id
     assert repository.validation_runs[-1]["version"] == 2

@@ -3,6 +3,7 @@ import PropTypes from "prop-types";
 import { LIST_DOT_CLASSES } from "../constants/status.js";
 import { DEPARTMENT_REVIEW_UPDATED, readDepartmentReview } from "../utils/departmentReview.js";
 import { getOverallStatus } from "../utils/overallStatus.js";
+import { displayPatientName } from "../utils/syntheticName.js";
 
 const highlightMatch = (text, query) => {
   if (!query || !text) return text;
@@ -91,7 +92,7 @@ export default function ClaimList({ claims: claimsProp, loading, privacyMode, se
       const q = query.trim().toLowerCase();
       result = result.filter(
         (c) =>
-          c.patient_name?.toLowerCase().includes(q) ||
+          displayPatientName(c).toLowerCase().includes(q) ||
           c.id?.toLowerCase().includes(q) ||
           c.facility_name?.toLowerCase().includes(q)
       );
@@ -172,7 +173,7 @@ export default function ClaimList({ claims: claimsProp, loading, privacyMode, se
                   <div className="flex min-w-0 items-center gap-2">
                       <span aria-label={overallStatus.label} title={overallStatus.label} className={`h-2 w-2 shrink-0 rounded-full ${dotClass}`} />
                       <p className={`min-w-0 flex-1 truncate text-xs font-semibold ${isSelected ? "text-teal-900 dark:text-teal-100" : "text-slate-900 dark:text-slate-100"}`}>
-                        {privacyMode ? "********" : highlightMatch(claim.patient_name || "Unknown Patient", query)}
+                        {privacyMode ? "********" : highlightMatch(displayPatientName(claim), query)}
                       </p>
                       {preview.score !== undefined && <span className="shrink-0 text-[10px] font-semibold text-slate-700 dark:text-slate-200" aria-label={`Automated score ${preview.score}`}>{preview.score}/100</span>}
                   </div>

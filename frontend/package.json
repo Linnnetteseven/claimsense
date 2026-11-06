@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "lint": "eslint . --report-unused-disable-directives --max-warnings 0",
-    "test": "node src/utils/claimsCache.test.mjs",
+    "test": "node src/utils/claimsCache.test.mjs && node src/utils/syntheticName.test.mjs",
     "test:e2e": "playwright test"
   },
   "dependencies": {
