@@ -727,7 +727,7 @@ export default function ValidationPanel({ claim, onValidationComplete, onLifecyc
           )}
 
           {departmentsEnabled && activeTab === "Departments" && (
-            <DeptGuideTab claimId={claim.id} department={claim.department} privacyMode={privacyMode} readOnly={isSubmitted} />
+            <DeptGuideTab claim={claim} claimId={claim.id} department={claim.department} privacyMode={privacyMode} readOnly={isSubmitted} />
           )}
           {activeTab === "Outcome" && (
             <OutcomeFeedbackTab claim={claim} privacyMode={privacyMode} onOutcomeSaved={handleOutcomeSaved} />

@@ -5,7 +5,7 @@ import { DEPARTMENT_REVIEW_UPDATED, departmentReviewStorageKey, readDepartmentRe
 import { api } from "../api/client.js";
 import { fingerprintDepartmentReview } from "../utils/reviewFingerprint.js";
 
-export default function DeptGuideTab({ claimId, department, privacyMode = false }) {
+export default function DeptGuideTab({ claim, claimId, department, privacyMode = false, readOnly = false }) {
   const departmentKey = (department || "").toLowerCase();
   const guide = DEPARTMENT_GUIDES[departmentKey];
   const storageKey = departmentReviewStorageKey(claimId, department);
@@ -20,6 +20,14 @@ export default function DeptGuideTab({ claimId, department, privacyMode = false 
   const documentedRequired = requiredSteps.filter((step) => review.completed[step.title] && String(review.evidence[step.title] || "").trim()).length;
   const readyToSignOff = requiredSteps.length > 0 && documentedRequired === requiredSteps.length;
   const completedTotal = guide?.steps.filter((step) => review.completed[step.title]).length || 0;
+  const supportingItems = useMemo(() => {
+    const rows = Array.isArray(claim?.items) ? claim.items : [];
+    const text = (item) => `${item.service_code || ""} ${item.description || ""}`.toLowerCase();
+    return {
+      laboratory: rows.filter((item) => /lab|pathology|investigation|test/.test(text(item))).length,
+      pharmacy: rows.filter((item) => /pharm|medicine|drug|dispens/.test(text(item))).length,
+    };
+  }, [claim]);
 
   const logReviewAction = async (snapshot, action, stepTitle = null) => {
     if (!claimId) return;
@@ -65,7 +73,7 @@ export default function DeptGuideTab({ claimId, department, privacyMode = false 
             window.dispatchEvent(new CustomEvent(DEPARTMENT_REVIEW_UPDATED, { detail: { claimId, department: departmentKey } }));
           }
           setStorageSyncState("saved");
-        } else if (initial && hasLocalState) {
+        } else if (initial && hasLocalState && !readOnly) {
           pendingSaves.current += 1;
           api.saveDepartmentReview(claimId, departmentKey, localReview)
             .then(() => active && setStorageSyncState("saved"))
@@ -82,9 +90,10 @@ export default function DeptGuideTab({ claimId, department, privacyMode = false 
     refreshSharedReview(true);
     const pollId = window.setInterval(() => refreshSharedReview(), 5000);
     return () => { active = false; window.clearInterval(pollId); };
-  }, [storageKey, claimId, department, departmentKey]);
+  }, [storageKey, claimId, department, departmentKey, readOnly]);
 
   const save = (next, auditAction = null, stepTitle = null) => {
+    if (readOnly) return;
     localRevision.current += 1;
     const revision = localRevision.current;
     reviewRef.current = next;
@@ -105,6 +114,7 @@ export default function DeptGuideTab({ claimId, department, privacyMode = false 
   };
 
   const update = (patch, revokeSignoff = true, auditAction = null, stepTitle = null) => {
+    if (readOnly) return;
     const signoffWasRevoked = Boolean(review.signedOffAt && revokeSignoff);
     save({
       ...review,
@@ -123,6 +133,7 @@ export default function DeptGuideTab({ claimId, department, privacyMode = false 
   };
 
   const signOff = () => {
+    if (readOnly) return;
     if (!readyToSignOff || !review.reviewer.trim()) return;
     update(
       {
@@ -179,6 +190,18 @@ export default function DeptGuideTab({ claimId, department, privacyMode = false 
               : storageSyncState === "saved" ? "Checklist saved to the shared backend."
                 : "Backend unavailable; checklist remains saved in this browser."}
         </p>
+        <p role="note" className="mb-4 rounded-md border border-slate-200 p-3 text-xs text-slate-600 dark:border-slate-800 dark:text-slate-300">
+          Draft checklist — to be confirmed with the desk officers.
+        </p>
+        {readOnly && <p role="status" className="mb-4 rounded-md bg-slate-100 p-3 text-xs text-slate-700 dark:bg-slate-900 dark:text-slate-300">This claim is submitted and locked. Department checklist edits are disabled.</p>}
+
+        <section aria-label="Read-only supporting items" className="mb-4 rounded-md bg-slate-50 p-3 dark:bg-slate-900">
+          <h4 className="text-xs font-semibold text-slate-700 dark:text-slate-200">Supporting items · read-only</h4>
+          <div className="mt-2 grid gap-2 text-xs text-slate-600 dark:text-slate-300 sm:grid-cols-2">
+            <p>Laboratory: {supportingItems.laboratory ? `${supportingItems.laboratory} item(s) listed` : "none listed on this claim"}</p>
+            <p>Pharmacy: {supportingItems.pharmacy ? `${supportingItems.pharmacy} item(s) listed` : "none listed on this claim"}</p>
+          </div>
+        </section>
 
         <div className="mb-5">
           <div className="flex justify-between text-xs text-slate-500 dark:text-slate-400 mb-2">
@@ -208,6 +231,7 @@ export default function DeptGuideTab({ claimId, department, privacyMode = false 
                   <input
                     type="checkbox"
                     checked={done}
+                    disabled={readOnly}
                     onChange={(event) => setStepComplete(step.title, event.target.checked)}
                     className="mt-1 h-4 w-4 rounded border-slate-300 text-teal-600 focus:ring-teal-500"
                   />
@@ -221,6 +245,7 @@ export default function DeptGuideTab({ claimId, department, privacyMode = false 
                     type="text"
                     value={privacyMode && review.evidence[step.title] ? "********" : review.evidence[step.title] || ""}
                     readOnly={privacyMode}
+                    disabled={readOnly}
                     onChange={(event) => update({ evidence: { ...review.evidence, [step.title]: event.target.value } })}
                     onBlur={() => logReviewAction(review, "department_evidence_saved", step.title)}
                     placeholder="Evidence reference (record, document, or note)"
@@ -241,6 +266,7 @@ export default function DeptGuideTab({ claimId, department, privacyMode = false 
           <input
             value={privacyMode && review.reviewer ? "********" : review.reviewer}
             readOnly={privacyMode}
+            disabled={readOnly}
             onChange={(event) => update({ reviewer: event.target.value })}
             onBlur={() => logReviewAction(review, "department_reviewer_updated")}
             placeholder="Name of department staff member"
@@ -252,6 +278,7 @@ export default function DeptGuideTab({ claimId, department, privacyMode = false 
           <textarea
             value={privacyMode && review.note ? "********" : review.note}
             readOnly={privacyMode}
+            disabled={readOnly}
             onChange={(event) => update({ note: event.target.value })}
             onBlur={() => logReviewAction(review, "department_review_note_saved")}
             rows={2}
@@ -263,7 +290,7 @@ export default function DeptGuideTab({ claimId, department, privacyMode = false 
           <button
             type="button"
             onClick={signOff}
-            disabled={!readyToSignOff || !review.reviewer.trim() || Boolean(review.signedOffAt)}
+            disabled={readOnly || !readyToSignOff || !review.reviewer.trim() || Boolean(review.signedOffAt)}
             className="rounded-lg px-4 py-2 text-sm font-semibold text-white bg-teal-700 hover:bg-teal-800 disabled:bg-slate-300 disabled:dark:bg-slate-700 disabled:cursor-not-allowed"
           >
             {isSignedOff ? "Department processing complete" : "Mark department processing complete"}
@@ -285,7 +312,9 @@ export default function DeptGuideTab({ claimId, department, privacyMode = false 
 }
 
 DeptGuideTab.propTypes = {
+  claim: PropTypes.object,
   claimId: PropTypes.string,
   department: PropTypes.string,
   privacyMode: PropTypes.bool,
+  readOnly: PropTypes.bool,
 };

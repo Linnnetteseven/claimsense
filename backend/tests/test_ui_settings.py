@@ -17,3 +17,12 @@ def test_ui_settings_reflect_department_mode(monkeypatch):
 
     monkeypatch.setattr(main.config, "DEPARTMENTS_ENABLED", False)
     assert client.get("/settings/ui").json() == {"departments_enabled": False}
+
+
+def test_department_routes_are_disabled_with_department_mode(monkeypatch):
+    monkeypatch.setattr(main.config, "DEPARTMENTS_ENABLED", False)
+    client = TestClient(main.app)
+
+    assert client.get("/claims/demo/department-review?department=outpatient").status_code == 404
+    assert client.put("/claims/demo/department-review", json={}).status_code == 404
+    assert client.post("/claims/demo/department-review", json={}).status_code == 404

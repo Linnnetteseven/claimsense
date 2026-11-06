@@ -1,5 +1,5 @@
-// Operational department checklists. They support staff review and evidence capture;
-// they are not all published SHA adjudication rules. Confirm local SOPs with Kerugoya.
+// Draft: to be confirmed with the desk officers. These operational checklists support
+// staff review and evidence capture; they are not all published SHA adjudication rules.
 export const DEPARTMENT_GUIDES = {
   outpatient: {
     label: "Outpatient",

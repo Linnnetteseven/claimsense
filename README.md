@@ -3,6 +3,20 @@
 
 ## *Department-led claim readiness for healthcare facilities*
 
+### Demo roles and department workflow
+
+`DEPARTMENTS_ENABLED` defaults to `true`. With department mode enabled, the demo role selector offers Outpatient, Renal, and Maternity claims desks plus Manager. Desk views filter the queue to their own department; the Manager view contains the aggregate Management Overview only. These are presentation controls, not authentication or production access control. With `DEPARTMENTS_ENABLED=false`, the Department Workspace and department-review API are disabled, and the demo roles become Claims officer and Manager. Core checks and claim-type checks continue to run.
+
+The current validation-to-desk mapping is:
+
+| Rule | Desk / claim type | Trigger |
+| --- | --- | --- |
+| `MISSING_PARTOGRAPH` | Maternity claims desk | Maternity department or diagnosis O80/O82, with delivery/labour indicators; checks `partograph_id`. |
+| `IMPLAUSIBLE_FREQUENCY` | Renal claims desk | Renal department and `sessions_this_week > 3`; warning only, an internal review flag rather than a SHA limit. |
+| `MISSING_POSTOP_NOTES` | Surgical claim type | Surgical department, `overnight_stay=true`, and empty `postop_notes_attached`; there is no Surgical demo desk role. |
+
+Outpatient has no department-specific automated rule. Lab and pharmacy are shown as read-only supporting-item status in the desk workspace, not as separate roles. Every checklist is a **draft to be confirmed with the desk officers** before a facility pilot.
+
 
 > **"Helping healthcare providers submit better claims before they become reimbursement delays."**
 
@@ -260,6 +274,8 @@ The default remains Redis/in-process behavior. Set `DB_BACKEND=oracle` only when
 2. Apply [backend/db/schema.sql](backend/db/schema.sql) once in APEX SQL Workshop or SQL Developer using the application schema user.
 3. Set `DB_BACKEND=oracle` and fill `ORACLE_USER`, `ORACLE_PASSWORD`, and `ORACLE_DSN` in the repo-root `.env`. For **walletless TLS**, enable TLS for the Autonomous Database, then copy the TLS connection string from its Database Connection page into `ORACLE_DSN`; leave `ORACLE_WALLET_DIR` and `ORACLE_WALLET_PASSWORD` blank. For **wallet mTLS**, use the wallet's TNS alias for `ORACLE_DSN`, set `ORACLE_WALLET_DIR` to its extracted folder, and set `ORACLE_WALLET_PASSWORD`. Never commit `.env` or wallet files.
 4. Install the backend requirements and start FastAPI as usual. Check `GET /health/db`; it reports `connection_mode` as `walletless_tls`, `wallet_mtls`, or `redis`, alongside connectivity, and never returns credentials.
+
+For an existing Oracle schema that already has the anchors status migration, apply [`scripts/migrate_audit_verification_checkpoint.sql`](scripts/migrate_audit_verification_checkpoint.sql) once. Then open a claim's Audit tab and run **Verify full ledger**. That stores the verified sequence and hash; later anchor requests verify only the suffix after that checkpoint. The full verification is manual and may take time on a remote database. The app never sends an Avalanche transaction during that verification.
 
 Example from PowerShell at the repository root:
 

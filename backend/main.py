@@ -63,6 +63,11 @@ def _storage_unavailable(exc: Exception, detail: str) -> HTTPException:
     return HTTPException(status_code=503, detail=detail)
 
 
+def _require_departments_enabled() -> None:
+    if not config.DEPARTMENTS_ENABLED:
+        raise HTTPException(status_code=404, detail="Department workflow is disabled")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("=" * 50)
@@ -786,6 +791,7 @@ async def start_claim_correction(claim_id: str, body: dict):
 @app.post("/claims/{claim_id}/department-review")
 async def record_department_review(claim_id: str, review_event: dict):
     """Append a fingerprinted department action; raw notes/evidence stay client-side."""
+    _require_departments_enabled()
     claim = get_claim_or_404(claim_id)
     if str((claim.get("_lifecycle") or {}).get("status", "")).lower() == "submitted":
         raise HTTPException(status_code=409, detail="Submitted claims are locked; start a correction version first")
@@ -828,6 +834,7 @@ async def record_department_review(claim_id: str, review_event: dict):
 
 @app.get("/claims/{claim_id}/department-review")
 async def get_department_review_state(claim_id: str, department: str):
+    _require_departments_enabled()
     claim = get_claim_or_404(claim_id)
     department = department.strip().lower()
     if department != str(claim.get("department", "")).strip().lower():
@@ -842,6 +849,7 @@ async def get_department_review_state(claim_id: str, department: str):
 
 @app.put("/claims/{claim_id}/department-review")
 async def save_department_review_state(claim_id: str, body: dict):
+    _require_departments_enabled()
     claim = get_claim_or_404(claim_id)
     if str((claim.get("_lifecycle") or {}).get("status", "")).lower() == "submitted":
         raise HTTPException(status_code=409, detail="Submitted claims are locked; start a correction version first")

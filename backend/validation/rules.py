@@ -13,6 +13,11 @@ from datetime import date, datetime
 from typing import Optional
 
 
+# Bump this identifier and date whenever the deterministic rule set changes.
+RULES_VERSION = "hakiki-rules-2026-11-06.1"
+RULES_DATE = "2026-11-06"
+
+
 @dataclass
 class RuleResult:
     rule_id: str
@@ -280,6 +285,9 @@ def rule_amount_reasonable(claim: dict) -> RuleResult:
 # Errors first so the score reflects the most critical issues prominently.
 # ---------------------------------------------------------------------------
 
+# Draft desk mapping: Maternity claims desk. Triggered by department=maternity or
+# ICD-10 O80/O82, then checks partograph_id for a delivery/labour claim.
+# Confirm this rule and supporting documentation with desk officers before a pilot.
 def rule_maternity_partograph(claim: dict) -> RuleResult:
     department = str(claim.get("department", "")).strip().lower()
     diagnosis = str(claim.get("diagnosis_code", "")).strip().upper()
@@ -307,6 +315,8 @@ def rule_maternity_partograph(claim: dict) -> RuleResult:
     return _pass("MISSING_PARTOGRAPH")
 
 
+# Draft desk mapping: Renal claims desk. Triggered by department=renal and
+# sessions_this_week > 3; this is an internal review flag, not a SHA limit.
 def rule_renal_session_frequency(claim: dict) -> RuleResult:
     department = str(claim.get("department", "")).strip().lower()
     if department != "renal":
@@ -328,6 +338,8 @@ def rule_renal_session_frequency(claim: dict) -> RuleResult:
     return _pass("IMPLAUSIBLE_FREQUENCY", "warning")
 
 
+# Draft claim-type check: surgical overnight claims with no postop_notes_attached.
+# No Surgical desk role is configured in the current demo roles.
 def rule_surgical_postop_notes(claim: dict) -> RuleResult:
     department = str(claim.get("department", "")).strip().lower()
     if department != "surgical":
