@@ -56,15 +56,15 @@ def main():
                 timed(conn, f"{alias}: ledger columns only",
                       "SELECT seq, claim_ref, event_type, payload_hash, prev_hash, hash, chain_version, created_at FROM audit_ledger ORDER BY seq")
                 timed(conn, f"{alias}: details columns only",
-                      "SELECT event_seq, details_json FROM audit_event_details ORDER BY event_seq")
+                      "SELECT event_seq, DBMS_LOB.SUBSTR(details_json, 4000, 1) AS details_json, DBMS_LOB.GETLENGTH(details_json) AS details_length FROM audit_event_details ORDER BY event_seq")
                 timed(conn, f"{alias}: ledger/details join",
-                      "SELECT l.seq, l.claim_ref, l.event_type, l.payload_hash, l.prev_hash, l.hash, l.chain_version, l.created_at, d.details_json FROM audit_ledger l LEFT JOIN audit_event_details d ON d.event_seq=l.seq ORDER BY l.seq")
+                      "SELECT l.seq, l.claim_ref, l.event_type, l.payload_hash, l.prev_hash, l.hash, l.chain_version, l.created_at, DBMS_LOB.SUBSTR(d.details_json, 4000, 1) AS details_json, DBMS_LOB.GETLENGTH(d.details_json) AS details_length FROM audit_ledger l LEFT JOIN audit_event_details d ON d.event_seq=l.seq ORDER BY l.seq")
                 timed(conn, f"{alias}: table columns",
                       "SELECT table_name, column_name, data_type, data_length, char_used FROM user_tab_columns WHERE table_name IN ('AUDIT_LEDGER','AUDIT_EVENT_DETAILS') ORDER BY table_name, column_id")
                 timed(conn, f"{alias}: join indexes",
                       "SELECT i.table_name, i.index_name, i.uniqueness, c.column_name, c.column_position FROM user_indexes i JOIN user_ind_columns c ON c.index_name=i.index_name AND c.table_name=i.table_name WHERE i.table_name IN ('AUDIT_LEDGER','AUDIT_EVENT_DETAILS') ORDER BY i.table_name,i.index_name,c.column_position")
                 with conn.cursor() as cur:
-                    cur.execute("EXPLAIN PLAN FOR SELECT l.seq, l.claim_ref, l.event_type, l.payload_hash, l.prev_hash, l.hash, l.chain_version, l.created_at, d.details_json FROM audit_ledger l LEFT JOIN audit_event_details d ON d.event_seq=l.seq ORDER BY l.seq")
+                    cur.execute("EXPLAIN PLAN FOR SELECT l.seq, l.claim_ref, l.event_type, l.payload_hash, l.prev_hash, l.hash, l.chain_version, l.created_at, DBMS_LOB.SUBSTR(d.details_json, 4000, 1), DBMS_LOB.GETLENGTH(d.details_json) FROM audit_ledger l LEFT JOIN audit_event_details d ON d.event_seq=l.seq ORDER BY l.seq")
                     cur.execute("SELECT plan_table_output FROM TABLE(DBMS_XPLAN.DISPLAY())")
                     print({"test": f"{alias}: explain plan", "plan": [row[0] for row in cur.fetchall()]})
             conn.close()

@@ -3,7 +3,7 @@ import PropTypes from "prop-types";
 import { api } from "../api/client.js";
 
 const STORAGE_PREFIX = "hakiki:claim-outcomes:";
-const OUTCOME_OPTIONS = ["Submitted", "Queried", "Rejected", "Resubmitted", "Paid", "Other"];
+const OUTCOME_OPTIONS = ["Submitted", "Accepted", "Paid", "Returned", "Rejected", "Queried", "Resubmitted", "Other"];
 const REASON_OPTIONS = [
   "Missing documentation",
   "Coding or service mismatch",
@@ -29,7 +29,7 @@ function readAllEvents() {
   return events.sort((a, b) => b.recordedAt.localeCompare(a.recordedAt));
 }
 
-export default function OutcomeFeedbackTab({ claim, privacyMode = false }) {
+export default function OutcomeFeedbackTab({ claim, privacyMode = false, onOutcomeSaved }) {
   const storageKey = `${STORAGE_PREFIX}${claim.id}`;
   const [allEvents, setAllEvents] = useState(() => readAllEvents());
   const [outcome, setOutcome] = useState("Queried");
@@ -38,7 +38,7 @@ export default function OutcomeFeedbackTab({ claim, privacyMode = false }) {
   const [saveError, setSaveError] = useState("");
   const [storageState, setStorageState] = useState("loading");
   const claimEvents = allEvents.filter((event) => event.claimId === claim.id);
-  const queryEvents = allEvents.filter((event) => ["Queried", "Rejected"].includes(event.outcome) && event.reasonCategory);
+  const queryEvents = allEvents.filter((event) => ["Queried", "Returned", "Rejected"].includes(event.outcome) && event.reasonCategory);
   const groupedReasons = useMemo(() => {
     const counts = new Map();
     queryEvents.forEach((event) => counts.set(event.reasonCategory, (counts.get(event.reasonCategory) || 0) + 1));
@@ -84,7 +84,7 @@ export default function OutcomeFeedbackTab({ claim, privacyMode = false }) {
       claimId: claim.id,
       department: claim.department || "Unassigned",
       outcome,
-      reasonCategory: ["Queried", "Rejected"].includes(outcome) ? reasonCategory : "",
+      reasonCategory: ["Queried", "Returned", "Rejected"].includes(outcome) ? reasonCategory : "",
       note: note.trim(),
       recordedAt: new Date().toISOString(),
     };
@@ -104,6 +104,7 @@ export default function OutcomeFeedbackTab({ claim, privacyMode = false }) {
     try {
       setStorageState("saving");
       await api.saveOutcome(record);
+      onOutcomeSaved?.(record);
       const refreshed = await api.getOutcomes();
       setAllEvents(refreshed.outcomes || [record, ...allEvents]);
       setStorageState("saved");
@@ -142,7 +143,7 @@ export default function OutcomeFeedbackTab({ claim, privacyMode = false }) {
               {OUTCOME_OPTIONS.map((item) => <option key={item}>{item}</option>)}
             </select>
           </label>
-          {["Queried", "Rejected"].includes(outcome) && (
+          {["Queried", "Returned", "Rejected"].includes(outcome) && (
             <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">
               Query / rejection theme
               <select value={reasonCategory} onChange={(event) => setReasonCategory(event.target.value)} className="mt-1.5 w-full text-sm font-normal p-2.5 border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200">
@@ -207,4 +208,5 @@ OutcomeFeedbackTab.propTypes = {
     department: PropTypes.string,
   }).isRequired,
   privacyMode: PropTypes.bool,
+  onOutcomeSaved: PropTypes.func,
 };

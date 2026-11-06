@@ -8,15 +8,28 @@ export default function AuditTrailTab({ claimId, privacyMode = false }) {
   const [anchorState, setAnchorState] = useState({ status: "not_checked", anchors: [] });
   const [anchorBusy, setAnchorBusy] = useState(false);
   const [anchorError, setAnchorError] = useState("");
+  const [fullVerifyBusy, setFullVerifyBusy] = useState(false);
+  const [fullVerifyResult, setFullVerifyResult] = useState(null);
   const [evidenceBusy, setEvidenceBusy] = useState(false);
   const [evidenceResult, setEvidenceResult] = useState(null);
   const [evidenceError, setEvidenceError] = useState("");
 
-  const verifyAnchor = useCallback(async () => {
+  const checkAnchorStatus = useCallback(async () => {
     setAnchorState((current) => ({ ...current, status: "checking" }));
-    try { setAnchorState(await api.verifyLedgerAnchor()); }
-    catch { setAnchorState({ status: "unavailable", anchors: [] }); }
+    try { setAnchorState(await api.checkAnchorStatus()); }
+    catch (error) {
+      setAnchorError(error.message || "Could not check the saved anchor status.");
+      setAnchorState((current) => ({ ...current, status: "unavailable" }));
+    }
   }, []);
+
+  const verifyFullLedger = async () => {
+    setFullVerifyBusy(true);
+    setFullVerifyResult(null);
+    try { setFullVerifyResult(await api.verifyFullLedger()); }
+    catch (error) { setFullVerifyResult({ verified: false, reason: error.message }); }
+    finally { setFullVerifyBusy(false); }
+  };
 
   const anchorNow = async () => {
     const secret = window.prompt("Enter the backend anchor authorization secret:");
@@ -24,11 +37,15 @@ export default function AuditTrailTab({ claimId, privacyMode = false }) {
     setAnchorBusy(true); setAnchorError("");
     try {
       const result = await api.anchorLedger(secret);
-      if (result.status === "unavailable") {
-        setAnchorError(result.reason || "Avalanche is unavailable.");
-        return;
-      }
-      await verifyAnchor();
+      const normalizedStatus = result.status === "anchored" || result.status === "already_anchored" ? "confirmed" : result.status === "unavailable" ? "failed" : result.status;
+      const legacyAnchor = result.tx_hash ? {
+        status: normalizedStatus, tx_hash: result.tx_hash, root_hash: result.root_hash || result.root,
+        head_hash: result.head_hash, from_seq: result.from_seq, to_seq: result.to_seq,
+        block_number: result.block_number, explorer_url: result.explorer_url,
+      } : null;
+      setAnchorState({ status: normalizedStatus, anchors: result.anchor ? [result.anchor] : legacyAnchor ? [legacyAnchor] : [] });
+      if (normalizedStatus === "failed") setAnchorError(result.reason || "The anchor transaction failed.");
+      else setAnchorError("");
     } catch (err) { setAnchorError(err.message); }
     finally { setAnchorBusy(false); }
   };
@@ -45,6 +62,20 @@ export default function AuditTrailTab({ claimId, privacyMode = false }) {
   useEffect(() => {
     if (claimId) load(claimId);
   }, [claimId, load]);
+
+  useEffect(() => {
+    checkAnchorStatus();
+  }, [checkAnchorStatus]);
+
+  const trackedAnchor = anchorState.anchor || anchorState.anchors?.at(-1);
+  useEffect(() => {
+    if (trackedAnchor?.status !== "pending" || !trackedAnchor.root_hash) return undefined;
+    const timer = window.setTimeout(async () => {
+      try { setAnchorState(await api.checkAnchorStatus(trackedAnchor.root_hash)); }
+      catch { /* Keep the pending display; the user can check again manually. */ }
+    }, 5000);
+    return () => window.clearTimeout(timer);
+  }, [trackedAnchor?.root_hash, trackedAnchor?.status]);
 
   const versionAnchor = anchorState.anchors?.find((item) =>
     currentVersion?.event_seq >= item.from_seq && currentVersion?.event_seq <= item.to_seq
@@ -73,17 +104,24 @@ export default function AuditTrailTab({ claimId, privacyMode = false }) {
       <details className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-4">
         <summary className="cursor-pointer text-sm font-semibold text-slate-700 dark:text-slate-200">Ledger integrity and Avalanche anchoring</summary>
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 dark:border-slate-800 pt-4">
-          <div className="text-sm">
-            {anchorState.status === "verified" && anchorState.anchors?.length > 0 ? (
-              <span className="text-emerald-700 dark:text-emerald-400">Verified against Avalanche Fuji, block {anchorState.anchors.at(-1).block_number}</span>
-            ) : <span className="text-slate-500 dark:text-slate-400">{anchorState.status === "not_checked" ? "Not checked yet" : anchorState.status === "checking" ? "Checking Avalanche Fuji…" : anchorState.status === "not_anchored" ? "Not anchored to Avalanche Fuji" : anchorState.status === "mismatch" ? "Ledger anchor mismatch" : "Avalanche verification unavailable"}</span>}
-            {anchorState.anchors?.at(-1)?.tx_hash && <a className="ml-2 text-teal-700 underline" href={`https://subnets-test.avax.network/c-chain/tx/${anchorState.anchors.at(-1).tx_hash}`} target="_blank" rel="noreferrer">View on Avalanche Explorer</a>}
-          </div>
+          {(() => {
+            const anchorRow = anchorState.anchor || anchorState.anchors?.at(-1);
+            const displayStatus = anchorRow?.status || anchorState.status;
+            return <div className="text-sm">
+              <span className={displayStatus === "confirmed" || displayStatus === "verified" ? "text-emerald-700 dark:text-emerald-400" : displayStatus === "failed" || displayStatus === "mismatch" ? "text-red-600 dark:text-red-400" : displayStatus === "pending" || displayStatus === "checking" ? "text-amber-700 dark:text-amber-400" : "text-slate-500 dark:text-slate-400"}>
+                {displayStatus === "confirmed" || displayStatus === "verified" ? `Confirmed${anchorRow?.block_number ? ` in block ${anchorRow.block_number}` : " on Avalanche Fuji"}` : displayStatus === "pending" ? "Pending on Avalanche Fuji" : displayStatus === "failed" ? "Anchor failed" : displayStatus === "checking" ? "Checking anchor status…" : displayStatus === "not_anchored" ? "No anchor recorded yet" : displayStatus === "not_checked" ? "Not checked yet" : "Anchor status unavailable"}
+              </span>
+              {anchorRow?.tx_hash && <a className="ml-2 text-teal-700 underline dark:text-teal-400" href={anchorRow.explorer_url || `https://subnets-test.avax.network/c-chain/tx/${anchorRow.tx_hash}`} target="_blank" rel="noreferrer">View transaction</a>}
+              {anchorRow?.tx_hash && <code className="ml-2 break-all text-xs text-slate-500">{anchorRow.tx_hash}</code>}
+            </div>;
+          })()}
           <div className="flex flex-wrap gap-2">
-            <button type="button" disabled={anchorBusy || anchorState.status === "checking"} onClick={verifyAnchor} className="rounded-lg border border-slate-300 dark:border-slate-700 px-4 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200 disabled:opacity-50">{anchorState.status === "checking" ? "Checking…" : "Check against Avalanche"}</button>
-            <button type="button" disabled={anchorBusy || anchorState.status === "checking"} onClick={anchorNow} className="rounded-lg bg-teal-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{anchorBusy ? "Anchoring…" : "Anchor now"}</button>
+            <button type="button" disabled={anchorBusy || anchorState.status === "checking"} onClick={checkAnchorStatus} className="rounded-lg border border-slate-300 dark:border-slate-700 px-4 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200 disabled:opacity-50">{anchorState.status === "checking" ? "Checking…" : anchorState.status === "failed" ? "Retry status check" : "Check status"}</button>
+            <button type="button" disabled={anchorBusy || anchorState.status === "checking" || anchorState.status === "pending" || anchorState.status === "failed" || anchorState.anchor?.status === "pending" || anchorState.anchor?.status === "failed" || anchorState.anchors?.at(-1)?.status === "pending" || anchorState.anchors?.at(-1)?.status === "failed"} onClick={anchorNow} className="rounded-lg bg-teal-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{anchorBusy ? "Submitting…" : "Anchor now"}</button>
+            <button type="button" disabled={fullVerifyBusy} onClick={verifyFullLedger} className="rounded-lg border border-slate-300 dark:border-slate-700 px-4 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200 disabled:opacity-50">{fullVerifyBusy ? "Verifying full ledger…" : "Verify full ledger"}</button>
           </div>
           {anchorError && <p className="w-full text-sm text-red-600">{anchorError}</p>}
+          {fullVerifyResult && <p role="status" className={`w-full text-sm ${fullVerifyResult.verified ? "text-emerald-700 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>{fullVerifyResult.verified ? `Full ledger verified (${fullVerifyResult.total} records). Checkpoint saved at seq ${fullVerifyResult.checkpoint?.seq ?? fullVerifyResult.total}.` : `Full ledger verification failed: ${fullVerifyResult.message || fullVerifyResult.reason || `record ${fullVerifyResult.broken_at}`}`}</p>}
         </div>
       </details>
       <div className="flex items-center gap-3 bg-teal-50/50 dark:bg-teal-950/10 border border-teal-100 dark:border-teal-900/30 rounded-2xl p-4">

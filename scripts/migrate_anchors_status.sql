@@ -1,4 +1,5 @@
--- Apply manually after confirming the anchors table is empty.
+-- Apply once after confirming ANCHORS.ROOT_HASH values are unique.
+-- Existing rows are retained and receive STATUS='confirmed' by the column default.
 -- Enables durable pending/confirmed/failed transaction tracking.
 ALTER TABLE anchors ADD (
     status VARCHAR2(16) DEFAULT 'confirmed' NOT NULL,

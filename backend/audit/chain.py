@@ -124,6 +124,15 @@ def _claim_events(claim_id: str) -> list[dict]:
     return [record for record in all_records() if record.get("claim_id") == claim_id]
 
 
+def _claim_version_events(events: list[dict]) -> list[dict]:
+    """Intake, corrections, and normal validations each identify a saved version."""
+    return [
+        event for event in events
+        if event.get("type") in {"claim_received", "claim_corrected"}
+        or (event.get("type") == "validation" and not event.get("informational"))
+    ]
+
+
 def _record_claim_received_legacy(claim: dict) -> Optional[dict]:
     """Record the first version of a claim once, when Hakiki ingests it."""
     claim_id = str(claim.get("id") or "")
@@ -183,7 +192,7 @@ def _record_claim_correction_legacy(claim_id: str, previous: dict, updated: dict
     """Record a new immutable version fingerprint and changed field names."""
     try:
         events = _claim_events(claim_id)
-        versions = [event for event in events if event.get("type") in {"claim_received", "claim_corrected"}]
+        versions = _claim_version_events(events)
         prior = versions[-1] if versions else record_claim_received(previous)
         if prior and prior.get("version_fingerprint") == claim_fingerprint(updated):
             return None
@@ -213,7 +222,7 @@ def verify_current_claim_version(claim_id: str, claim: dict) -> dict:
     repository = _repository()
     if _oracle_active(repository):
         return repository.verify_current_claim_version(claim_id, claim)
-    versions = [event for event in _claim_events(claim_id) if event.get("type") in {"claim_received", "claim_corrected"}]
+    versions = _claim_version_events(_claim_events(claim_id))
     if not versions:
         return {"status": "not_recorded"}
     latest = versions[-1]
@@ -231,14 +240,16 @@ def _record_validation_legacy(claim_id: str, validation_result: dict, claim: Opt
     try:
         events = _claim_events(claim_id)
         fingerprint = claim_fingerprint(claim) if claim else None
-        versions = [event for event in events if event.get("type") in {"claim_received", "claim_corrected"}]
+        versions = _claim_version_events(events)
         version = next((event.get("version") for event in reversed(versions) if event.get("version_fingerprint") == fingerprint), None)
         return _append({
             "type": "validation", "claim_id": claim_id,
-            "version": version, "version_fingerprint": fingerprint,
+            "version": validation_result.get("version", version), "version_fingerprint": fingerprint,
             "score": validation_result["score"], "status": validation_result["status"],
             "error_count": validation_result["error_count"],
             "warning_count": validation_result["warning_count"],
+            "rules_version": validation_result.get("rules_version"),
+            "rules_date": validation_result.get("rules_date"),
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         })
     except Exception:
@@ -246,10 +257,12 @@ def _record_validation_legacy(claim_id: str, validation_result: dict, claim: Opt
         return None
 
 
-def record_validation(claim_id: str, validation_result: dict, claim: Optional[dict] = None) -> Optional[dict]:
+def record_validation(claim_id: str, validation_result: dict, claim: Optional[dict] = None, informational: bool = False) -> Optional[dict]:
     repository = _repository()
+    if _oracle_active(repository) and informational:
+        return repository.record_readonly_validation(claim_id, int(validation_result.get("version", 0)), claim or {}, validation_result)
     if _oracle_active(repository):
-        return repository.record_validation(claim_id, claim or {}, validation_result)
+        return repository.record_validation(claim_id, claim or {}, validation_result, informational=False)
     return repository.record_validation(claim_id, claim or {}, validation_result)
 
 
@@ -268,7 +281,7 @@ def record_department_review(claim_id: str, department: str, review_event: dict,
         })
     try:
         claim_events = _claim_events(claim_id)
-        versions = [event for event in claim_events if event.get("type") in {"claim_received", "claim_corrected"}]
+        versions = _claim_version_events(claim_events)
         version_fingerprint = claim_fingerprint(claim) if claim else None
         version = next((event.get("version") for event in reversed(versions) if event.get("version_fingerprint") == version_fingerprint), None)
         return _append({
@@ -298,7 +311,7 @@ def record_staff_review(claim_id: str, claim: dict, reviewer_label: str, decisio
         })
     try:
         fingerprint = claim_fingerprint(claim)
-        versions = [event for event in _claim_events(claim_id) if event.get("type") in {"claim_received", "claim_corrected"}]
+        versions = _claim_version_events(_claim_events(claim_id))
         version_event = next((event for event in reversed(versions) if event.get("version_fingerprint") == fingerprint), None)
         return _append({
             "type": "staff_review_completed", "claim_id": claim_id,
@@ -316,14 +329,10 @@ def record_staff_review(claim_id: str, claim: dict, reviewer_label: str, decisio
 def record_submission(claim_id: str, claim: dict, outcome: str, detail: Optional[str] = None) -> Optional[dict]:
     repository = _repository()
     if _oracle_active(repository):
-        return repository.record_event({
-            "type": "submission", "claim_id": claim_id,
-            "version_fingerprint": claim_fingerprint(claim), "outcome": outcome,
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        })
+        return repository.record_submission(claim_id, claim, outcome, detail)
     try:
         events = _claim_events(claim_id)
-        versions = [event for event in events if event.get("type") in {"claim_received", "claim_corrected"}]
+        versions = _claim_version_events(events)
         fingerprint = claim_fingerprint(claim)
         version = next((event.get("version") for event in reversed(versions) if event.get("version_fingerprint") == fingerprint), None)
         return _append({
@@ -391,6 +400,30 @@ def verify_records(records: list[dict]) -> dict:
         if latest and latest != (records[-1]["hash"] if records else _GENESIS_HASH):
             return {"verified": False, "total": len(records), "broken_at": len(records), "reason": "tail_mismatch"}
     return {"verified": True, "total": len(records), "broken_at": None}
+
+
+def verify_records_from_checkpoint(records: list[dict], checkpoint_seq: int, checkpoint_hash: str) -> dict:
+    """Verify only the suffix after a previously full-verified ledger checkpoint."""
+    previous = checkpoint_hash
+    expected_seq = int(checkpoint_seq) + 1
+    for index, record in enumerate(records):
+        payload = {key: value for key, value in record.items() if key not in ("prev_hash", "hash")}
+        if record.get("hash_version") == 3:
+            expected = _hash_record_v3(previous, record)
+        elif record.get("hash_version") == 4:
+            expected = _hash_record_v4(previous, record)
+        elif record.get("hash_version") == 2:
+            expected = _hash_record(previous, payload)
+        else:
+            expected = _hash_record_v1(previous, payload)
+        if (record.get("seq") != expected_seq or record.get("prev_hash") != previous
+                or expected != record.get("hash")):
+            return {"verified": False, "total": len(records), "broken_at": expected_seq,
+                    "reason": "checkpoint_link_or_hash_mismatch"}
+        previous = record["hash"]
+        expected_seq += 1
+    return {"verified": True, "total": len(records), "broken_at": None,
+            "last_verified_seq": expected_seq - 1, "last_verified_hash": previous}
 
 def verify_chain() -> dict:
     if not _audit_enabled():

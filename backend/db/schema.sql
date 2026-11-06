@@ -36,7 +36,10 @@ CREATE TABLE validation_runs (
     warning_count NUMBER(5) DEFAULT 0 NOT NULL,
     counts_json   CLOB CHECK (counts_json IS JSON),
     ledger_seq    NUMBER(20),
-    created_at    TIMESTAMP WITH TIME ZONE DEFAULT SYSTIMESTAMP NOT NULL
+    created_at    TIMESTAMP WITH TIME ZONE DEFAULT SYSTIMESTAMP NOT NULL,
+    rules_version VARCHAR2(64) DEFAULT 'unknown' NOT NULL,
+    rules_date    VARCHAR2(10) DEFAULT 'unknown' NOT NULL,
+    informational NUMBER(1) DEFAULT 0 NOT NULL
 );
 
 CREATE TABLE department_signoffs (
@@ -80,9 +83,21 @@ CREATE TABLE anchors (
     from_seq   NUMBER(20) NOT NULL,
     to_seq     NUMBER(20) NOT NULL,
     root_hash  CHAR(66) NOT NULL,
-    tx_hash    VARCHAR2(80) NOT NULL UNIQUE,
+    tx_hash    VARCHAR2(80) UNIQUE,
+    status     VARCHAR2(16) DEFAULT 'confirmed' NOT NULL,
+    head_hash  CHAR(64),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT SYSTIMESTAMP NOT NULL,
-    CONSTRAINT anchors_range_ck CHECK (from_seq > 0 AND to_seq >= from_seq)
+    CONSTRAINT anchors_range_ck CHECK (from_seq > 0 AND to_seq >= from_seq),
+    CONSTRAINT anchors_status_ck CHECK (status IN ('pending', 'confirmed', 'failed')),
+    CONSTRAINT anchors_root_hash_uq UNIQUE (root_hash)
+);
+
+-- Checkpoint written only after a successful full-ledger verification.
+CREATE TABLE audit_verification_checkpoint (
+    singleton_id      NUMBER(1) PRIMARY KEY CHECK (singleton_id = 1),
+    last_verified_seq NUMBER(20) NOT NULL,
+    last_verified_hash CHAR(64) NOT NULL,
+    verified_at       TIMESTAMP WITH TIME ZONE NOT NULL
 );
 
 CREATE TABLE legacy_anchors (

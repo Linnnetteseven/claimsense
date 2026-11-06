@@ -93,7 +93,7 @@ def _safe_details(payload: dict) -> dict:
         "changed_fields", "department", "step_title", "completed_checks", "signed_off",
         "decision", "outcome", "from_seq", "to_seq", "root", "tx_hash", "block_number",
         "head_hash", "review_fingerprint", "version_fingerprint", "previous_version_fingerprint",
-        "reason_category",
+        "reason_category", "rules_version", "rules_date", "informational",
     }
     return {key: payload[key] for key in allowed if key in payload}
 
@@ -189,13 +189,17 @@ class OracleRepository:
     def list_claim_queue(self, limit: int = 50) -> tuple[int, list[dict]]:
         """Read only queue fields and current-version validation summaries."""
         query = """
-            SELECT total_count, id, patient_name, facility_name, department,
+            SELECT total_count, id, patient_id, facility_name, department,
                    visit_date, is_synthetic, score, validation_status, error_count,
-                   warning_count, validation_payload
+                   warning_count, validation_payload, lifecycle_status,
+                   current_version, version_fingerprint
             FROM (
                 SELECT COUNT(*) OVER() AS total_count,
                        c.id,
-                       JSON_VALUE(c.payload, '$.patient_name' RETURNING VARCHAR2(255)) AS patient_name,
+                       c.status AS lifecycle_status,
+                       c.current_version,
+                       cv.version_fingerprint,
+                       JSON_VALUE(c.payload, '$.patient_id' RETURNING VARCHAR2(32)) AS patient_id,
                        JSON_VALUE(c.payload, '$.facility_name' RETURNING VARCHAR2(255)) AS facility_name,
                        NVL(c.department, 'unassigned') AS department,
                        JSON_VALUE(c.payload, '$.visit_date' RETURNING VARCHAR2(32)) AS visit_date,
@@ -209,8 +213,9 @@ class OracleRepository:
                 LEFT JOIN (
                     SELECT id, claim_id, version, score, status, error_count, warning_count,
                            ROW_NUMBER() OVER (PARTITION BY claim_id ORDER BY created_at DESC, id DESC) AS rn
-                    FROM validation_runs
+                    FROM validation_runs WHERE informational = 0
                 ) vr ON vr.claim_id = c.id AND vr.rn = 1 AND vr.version = c.current_version
+                LEFT JOIN claim_versions cv ON cv.claim_id = c.id AND cv.version = c.current_version
                 ORDER BY c.created_at DESC, c.id DESC
             )
             WHERE ROWNUM <= :limit
@@ -224,17 +229,25 @@ class OracleRepository:
         total = int(rows[0][0])
         claims = []
         for row in rows:
-            (_, claim_id, patient_name, facility_name, department, visit_date,
-             synthetic, score, status, errors, warnings, validation_payload) = row
+            (_, claim_id, patient_id, facility_name, department, visit_date,
+             synthetic, score, status, errors, warnings, validation_payload,
+             lifecycle_status, current_version, version_fingerprint) = row
             preview = None
             if score is not None:
                 color = "green" if status == "Ready for Submission" else "amber" if status == "Needs Review" else "red"
                 preview = {"score": int(score), "status": status, "color": color,
                            "error_count": int(errors), "warning_count": int(warnings)}
+            normalized_lifecycle = str(lifecycle_status or "").lower()
+            if normalized_lifecycle == "needs_revalidation":
+                preview = {**(preview or {}), "status": "Needs revalidation", "color": "amber"}
+            elif normalized_lifecycle == "submitted":
+                preview = {**(preview or {}), "status": "Submitted, locked", "color": "green"}
             claims.append({
-                "id": claim_id, "patient_name": patient_name,
+                "id": claim_id, "patient_id": patient_id,
                 "facility_name": facility_name, "department": department, "visit_date": visit_date,
                 "is_synthetic": bool(synthetic), "_preview": preview,
+                "_lifecycle": {"status": normalized_lifecycle or "needs_revalidation",
+                               "version": int(current_version), "version_fingerprint": version_fingerprint},
                 "_validation_payload": _load_json(validation_payload) if validation_payload else None,
             })
         return total, claims
@@ -454,15 +467,22 @@ class OracleRepository:
         # from Oracle columns can vary with driver/NLS timestamp formatting.
         safe_details["hash_input"] = hash_input
         if event_type == "anchor":
+            root_hash = str(payload.get("root", ""))
             cursor.execute(
-                """INSERT INTO anchors (from_seq, to_seq, root_hash, tx_hash, created_at)
-                   VALUES (:from_seq, :to_seq, :root_hash, :tx_hash, :created_at)""",
-                {
-                    "from_seq": int(payload["from_seq"]), "to_seq": int(payload["to_seq"]),
-                    "root_hash": str(payload.get("root", "")), "tx_hash": str(payload["tx_hash"]),
-                    "created_at": created_at,
-                },
+                """UPDATE anchors SET status = 'confirmed', tx_hash = :tx_hash,
+                   head_hash = :head_hash WHERE root_hash = :root_hash""",
+                {"tx_hash": str(payload["tx_hash"]), "head_hash": payload.get("head_hash"),
+                 "root_hash": root_hash},
             )
+            if cursor.rowcount == 0:
+                cursor.execute(
+                    """INSERT INTO anchors
+                       (from_seq, to_seq, root_hash, tx_hash, status, head_hash, created_at)
+                       VALUES (:from_seq, :to_seq, :root_hash, :tx_hash, 'confirmed', :head_hash, :created_at)""",
+                    {"from_seq": int(payload["from_seq"]), "to_seq": int(payload["to_seq"]),
+                     "root_hash": root_hash, "tx_hash": str(payload["tx_hash"]),
+                     "head_hash": payload.get("head_hash"), "created_at": created_at},
+                )
         cursor.execute(
             "INSERT INTO audit_event_details (event_seq, details_json) VALUES (:seq, :details_json)",
             {"seq": seq, "details_json": _canonical(safe_details)},
@@ -536,6 +556,208 @@ class OracleRepository:
         return records
 
     @_retry_safe_read
+    def get_ledger_head(self) -> dict:
+        with get_pool().acquire() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT last_seq, RTRIM(last_hash) FROM audit_ledger_head WHERE singleton_id = 1")
+                row = cursor.fetchone()
+        if not row:
+            raise RuntimeError("Oracle audit_ledger_head is not initialized")
+        return {"seq": int(row[0]), "hash": row[1]}
+
+    @_retry_safe_read
+    def get_ledger_record_hash(self, seq: int) -> dict | None:
+        with get_pool().acquire() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT seq, RTRIM(hash), RTRIM(prev_hash) FROM audit_ledger WHERE seq = :seq",
+                    {"seq": int(seq)},
+                )
+                row = cursor.fetchone()
+        return {"seq": int(row[0]), "hash": row[1], "prev_hash": row[2]} if row else None
+
+    @_retry_safe_read
+    def get_ledger_records_after(self, seq: int) -> list[dict]:
+        """Read only the suffix after a verified checkpoint (never a full-ledger scan)."""
+        query = """SELECT l.seq, l.claim_ref, l.event_type, l.payload_hash, RTRIM(l.prev_hash),
+                          RTRIM(l.hash), l.chain_version,
+                          TO_CHAR(l.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+                          DBMS_LOB.SUBSTR(d.details_json, 4000, 1),
+                          DBMS_LOB.GETLENGTH(d.details_json)
+                   FROM audit_ledger l LEFT JOIN audit_event_details d ON d.event_seq = l.seq
+                   WHERE l.seq > :seq ORDER BY l.seq"""
+        with get_pool().acquire() as connection:
+            with connection.cursor() as cursor:
+                cursor.arraysize = 500
+                cursor.execute(query, {"seq": int(seq)}, fetch_lobs=False)
+                rows = cursor.fetchall()
+        records = []
+        for row in rows:
+            event_seq, claim_ref, event_type, payload_hash, previous, digest, version, timestamp, details_text, length = row
+            if length and int(length) > 4000:
+                raise ValueError(f"Audit event {event_seq} details_json exceeds 4000 characters")
+            details = _load_json(details_text) if details_text else {}
+            header = details.get("hash_input")
+            if int(version) == 4 and isinstance(header, dict):
+                timestamp = header.get("timestamp", timestamp)
+            record = {**details, "seq": int(event_seq), "claim_ref": claim_ref,
+                      "type": event_type, "payload_hash": payload_hash,
+                      "prev_hash": previous, "hash": digest, "hash_version": int(version),
+                      "timestamp": timestamp}
+            if event_type == "anchor":
+                record["anchored_tx"] = record.get("tx_hash")
+            records.append(record)
+        return records
+
+    @_retry_safe_read
+    def has_non_anchor_events_after(self, seq: int, through_seq: int) -> bool:
+        with get_pool().acquire() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT 1 FROM audit_ledger WHERE seq > :seq AND seq <= :through_seq AND event_type <> 'anchor' FETCH FIRST 1 ROW ONLY",
+                    {"seq": int(seq), "through_seq": int(through_seq)},
+                )
+                return cursor.fetchone() is not None
+
+    @_retry_safe_read
+    def get_verification_checkpoint(self) -> dict | None:
+        with get_pool().acquire() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """SELECT last_verified_seq, RTRIM(last_verified_hash), verified_at
+                       FROM audit_verification_checkpoint WHERE singleton_id = 1"""
+                )
+                row = cursor.fetchone()
+        return ({"seq": int(row[0]), "hash": row[1], "verified_at": row[2].isoformat()}
+                if row else None)
+
+    def save_verification_checkpoint(self, seq: int, digest: str) -> None:
+        with get_pool().acquire() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """MERGE INTO audit_verification_checkpoint target
+                       USING (SELECT 1 AS singleton_id FROM dual) source
+                       ON (target.singleton_id = source.singleton_id)
+                       WHEN MATCHED THEN UPDATE SET last_verified_seq = :seq,
+                           last_verified_hash = :digest, verified_at = SYSTIMESTAMP
+                       WHEN NOT MATCHED THEN INSERT
+                           (singleton_id, last_verified_seq, last_verified_hash, verified_at)
+                           VALUES (1, :seq, :digest, SYSTIMESTAMP)""",
+                    {"seq": int(seq), "digest": digest},
+                )
+                connection.commit()
+
+    @_retry_safe_read
+    def get_anchor_by_root(self, root_hash: str) -> dict | None:
+        with get_pool().acquire() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """SELECT id, from_seq, to_seq, RTRIM(root_hash), tx_hash, status,
+                              RTRIM(head_hash), created_at
+                       FROM anchors WHERE root_hash = :root_hash""",
+                    {"root_hash": root_hash},
+                )
+                row = cursor.fetchone()
+        return self._anchor_row_dict(row) if row else None
+
+    @staticmethod
+    def _anchor_row_dict(row) -> dict:
+        return {"id": int(row[0]), "from_seq": int(row[1]), "to_seq": int(row[2]),
+                "root_hash": str(row[3]).strip(), "tx_hash": row[4], "status": row[5],
+                "head_hash": str(row[6]).strip() if row[6] else None,
+                "created_at": row[7].isoformat() if row[7] else None}
+
+    def create_pending_anchor(self, from_seq: int, to_seq: int, root_hash: str, head_hash: str) -> dict:
+        """Commit the deduplication row before any blockchain transaction is sent."""
+        try:
+            with get_pool().acquire() as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """INSERT INTO anchors (from_seq, to_seq, root_hash, tx_hash, status, head_hash, created_at)
+                           VALUES (:from_seq, :to_seq, :root_hash, NULL, 'pending', :head_hash, SYSTIMESTAMP)""",
+                        {"from_seq": int(from_seq), "to_seq": int(to_seq),
+                         "root_hash": root_hash, "head_hash": head_hash},
+                    )
+                    connection.commit()
+                    cursor.execute(
+                        """SELECT id, from_seq, to_seq, RTRIM(root_hash), tx_hash, status,
+                                  RTRIM(head_hash), created_at FROM anchors WHERE root_hash = :root_hash""",
+                        {"root_hash": root_hash},
+                    )
+                    row = cursor.fetchone()
+            result = self._anchor_row_dict(row)
+            result["_created"] = True
+            return result
+        except Exception:
+            # A competing request may have inserted this unique root first.
+            existing = self.get_anchor_by_root(root_hash)
+            if existing:
+                existing["_created"] = False
+                return existing
+            raise
+
+    def update_anchor_submission(self, root_hash: str, tx_hash: str) -> dict | None:
+        with get_pool().acquire() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE anchors SET tx_hash = :tx_hash WHERE root_hash = :root_hash AND status = 'pending'",
+                    {"tx_hash": tx_hash, "root_hash": root_hash},
+                )
+                connection.commit()
+        return self.get_anchor_by_root(root_hash)
+
+    def update_anchor_status(self, root_hash: str, status: str) -> dict | None:
+        if status not in {"pending", "confirmed", "failed"}:
+            raise ValueError("Invalid anchor status")
+        with get_pool().acquire() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE anchors SET status = :status WHERE root_hash = :root_hash",
+                    {"status": status, "root_hash": root_hash},
+                )
+                connection.commit()
+        return self.get_anchor_by_root(root_hash)
+
+    def backfill_anchor_head_hash(self, root_hash: str, head_hash: str) -> dict | None:
+        with get_pool().acquire() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE anchors SET head_hash = :head_hash WHERE root_hash = :root_hash AND head_hash IS NULL",
+                    {"head_hash": head_hash, "root_hash": root_hash},
+                )
+                connection.commit()
+        return self.get_anchor_by_root(root_hash)
+
+    def finalize_anchor(self, root_hash: str, event_payload: dict) -> dict:
+        """Atomically confirm the row and append its ledger event once mined."""
+        with get_pool().acquire() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT status FROM anchors WHERE root_hash = :root_hash FOR UPDATE",
+                    {"root_hash": root_hash},
+                )
+                row = cursor.fetchone()
+                if not row:
+                    raise ValueError("Anchor row was not found")
+                if row[0] == "confirmed":
+                    connection.rollback()
+                    return {"updated": False, "anchor": self.get_anchor_by_root(root_hash)}
+                event = self._append_cursor(connection, cursor, event_payload)
+                connection.commit()
+        return {"updated": True, "event": event, "anchor": self.get_anchor_by_root(root_hash)}
+
+    @_retry_safe_read
+    def list_anchor_records(self) -> list[dict]:
+        with get_pool().acquire() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """SELECT id, from_seq, to_seq, RTRIM(root_hash), tx_hash, status,
+                              RTRIM(head_hash), created_at FROM anchors ORDER BY id"""
+                )
+                rows = cursor.fetchall()
+        return [self._anchor_row_dict(row) for row in rows]
+
+    @_retry_safe_read
     def get_ledger_for_claim(self, claim_id: str) -> list[dict]:
         """Return only this claim's latest 50 events in one indexed query."""
         query = """
@@ -603,11 +825,11 @@ class OracleRepository:
         created_at, _ = _timestamp(created_at_value)
         cursor.execute(
             """INSERT INTO claims (id, claim_ref, facility, department, payload, status, current_version, created_at)
-               VALUES (:id, :claim_ref, :facility, :department, :payload, :status, 1, :created_at)""",
+               VALUES (:id, :claim_ref, :facility, :department, :payload, 'needs_revalidation', 1, :created_at)""",
             {
                 "id": claim_id, "claim_ref": claim_ref,
                 "facility": claim.get("facility_name"), "department": claim.get("department"),
-                "payload": payload_text, "status": claim.get("status"), "created_at": created_at,
+                "payload": payload_text, "created_at": created_at,
             },
         )
         event_payload = {
@@ -692,7 +914,7 @@ class OracleRepository:
                     batch["claims"].append({
                         "id": claim_id, "claim_ref": claim_ref,
                         "facility": claim.get("facility_name"), "department": claim.get("department"),
-                        "payload": payload_text, "status": claim.get("status"),
+                    "payload": payload_text, "status": "needs_revalidation",
                         "created_at": created_at.strftime("%Y-%m-%dT%H:%M:%S+00:00"),
                     })
                     batch["versions"].append({
@@ -751,7 +973,29 @@ class OracleRepository:
         with get_pool().acquire() as connection:
             with connection.cursor() as cursor:
                 selected = self._select_claim(cursor, claim_id)
-                return selected[1] if selected else None
+                if not selected:
+                    return None
+                claim_ref, claim, version, status = selected
+                cursor.execute(
+                    "SELECT version_fingerprint FROM claim_versions WHERE claim_id = :claim_id AND version = :version",
+                    {"claim_id": claim_id, "version": version},
+                )
+                fingerprint_row = cursor.fetchone()
+                cursor.execute(
+                    """SELECT outcome, reason, recorded_at FROM claim_outcomes
+                       WHERE claim_id = :claim_id ORDER BY recorded_at DESC FETCH FIRST 1 ROW ONLY""",
+                    {"claim_id": claim_id},
+                )
+                outcome_row = cursor.fetchone()
+                claim["_lifecycle"] = {
+                    "status": str(status or "needs_revalidation").lower(),
+                    "version": version,
+                    "version_fingerprint": fingerprint_row[0] if fingerprint_row else None,
+                    "latest_outcome": outcome_row[0] if outcome_row else None,
+                    "latest_outcome_reason": outcome_row[1] if outcome_row else None,
+                    "claim_ref": claim_ref,
+                }
+                return claim
 
     @_retry_safe_read
     def list_claims(self) -> list[dict]:
@@ -777,7 +1021,10 @@ class OracleRepository:
                 if not selected:
                     self._ensure_claim_cursor(connection, cursor, previous)
                     selected = self._select_claim(cursor, claim_id, for_update=True)
-                _claim_ref, current, current_version, _status = selected
+                _claim_ref, current, current_version, current_status = selected
+                if str(current_status or "").lower() == "submitted":
+                    connection.rollback()
+                    raise ValueError("Submitted claims are locked; create a correction version first")
                 fingerprint = _claim_fingerprint(updated)
                 cursor.execute(
                     "SELECT version_fingerprint FROM claim_versions WHERE claim_id = :claim_id ORDER BY version DESC FETCH FIRST 1 ROW ONLY",
@@ -799,6 +1046,7 @@ class OracleRepository:
                 cursor.execute(
                     """UPDATE claims SET payload = :payload, department = :department,
                        facility = :facility, current_version = :version, updated_at = SYSTIMESTAMP
+                       , status = 'needs_revalidation'
                        WHERE id = :claim_id""",
                     {"payload": _canonical(updated), "department": updated.get("department"),
                      "facility": updated.get("facility_name"), "version": version, "claim_id": claim_id},
@@ -816,7 +1064,7 @@ class OracleRepository:
                 response_cache.clear()
                 return event
 
-    def record_validation(self, claim_id: str, claim: dict, result: dict) -> dict | None:
+    def record_validation(self, claim_id: str, claim: dict, result: dict, informational: bool = False) -> dict | None:
         created_at, timestamp = _timestamp(result.get("recorded_at"))
         with get_pool().acquire() as connection:
             with connection.cursor() as cursor:
@@ -824,31 +1072,210 @@ class OracleRepository:
                 if not selected:
                     self._ensure_claim_cursor(connection, cursor, claim)
                     selected = self._select_claim(cursor, claim_id, for_update=True)
-                version = selected[2]
+                claim_ref, stored_claim, current_version, status = selected
+                if str(status or "").lower() == "submitted" and not informational:
+                    connection.rollback()
+                    raise ValueError("Submitted claims are locked; use read-only re-check")
+                if _claim_fingerprint(stored_claim) != _claim_fingerprint(claim):
+                    connection.rollback()
+                    raise ValueError("Validation payload does not match the currently saved claim version")
+                version = current_version if informational else current_version + 1
                 fingerprint = _claim_fingerprint(claim)
                 event = self._append_cursor(connection, cursor, {
-                    "type": "validation", "claim_id": claim_id, "version": version,
+                    "type": "informational_validation" if informational else "validation",
+                    "claim_id": claim_id, "version": version,
                     "version_fingerprint": fingerprint, "score": result["score"],
                     "status": result["status"], "error_count": result["error_count"],
                     "warning_count": result["warning_count"],
+                    "rules_version": result.get("rules_version"),
+                    "rules_date": result.get("rules_date"),
+                    "informational": bool(informational),
                     "timestamp": timestamp,
                 })
+                if not informational:
+                    cursor.execute(
+                        """INSERT INTO claim_versions
+                           (claim_id, version, payload, created_by, version_fingerprint, event_seq, changed_fields_json, created_at)
+                           VALUES (:claim_id, :version, :payload, 'validation_run', :fingerprint, :event_seq, :changed, :created_at)""",
+                        {"claim_id": claim_id, "version": version, "payload": _canonical(stored_claim),
+                         "fingerprint": fingerprint, "event_seq": event["seq"],
+                         "changed": _canonical({"kind": "validation_snapshot"}), "created_at": created_at},
+                    )
+                    lifecycle_status = result.get("status") or "Needs Review"
+                    if lifecycle_status == "Ready for Submission":
+                        lifecycle_status = "ready"
+                    elif lifecycle_status == "High Risk — Errors Found":
+                        lifecycle_status = "blocked"
+                    elif lifecycle_status == "Needs Review":
+                        lifecycle_status = "needs_review"
+                    cursor.execute(
+                        """UPDATE claims SET current_version = :version, status = :status,
+                           updated_at = SYSTIMESTAMP WHERE id = :claim_id""",
+                        {"version": version, "status": lifecycle_status, "claim_id": claim_id},
+                    )
                 cursor.execute(
                     """INSERT INTO validation_runs
-                       (claim_id, version, score, status, error_count, warning_count, counts_json, ledger_seq, created_at)
-                       VALUES (:claim_id, :version, :score, :status, :errors, :warnings, :counts, :ledger_seq, :created_at)""",
+                       (claim_id, version, score, status, error_count, warning_count, counts_json,
+                        ledger_seq, created_at, rules_version, rules_date, informational)
+                       VALUES (:claim_id, :version, :score, :status, :errors, :warnings, :counts,
+                        :ledger_seq, :created_at, :rules_version, :rules_date, :informational)""",
                     {"claim_id": claim_id, "version": version, "score": result["score"],
                      "status": result["status"], "errors": result["error_count"],
                      "warnings": result["warning_count"],
                      "counts": _canonical({
                          "errors": result["error_count"], "warnings": result["warning_count"],
+                         "rules_version": result.get("rules_version"),
+                         "rules_date": result.get("rules_date"),
+                         "informational": bool(informational),
                          "failed_rules": [
                              {"rule_id": rule.get("rule_id"), "rule_name": rule.get("rule_id")}
                              for rule in result.get("results", []) if not rule.get("passed")
                          ],
                      }),
-                     "ledger_seq": event["seq"], "created_at": created_at},
+                     "ledger_seq": event["seq"], "created_at": created_at,
+                     "rules_version": result.get("rules_version", "unknown"),
+                     "rules_date": result.get("rules_date", "unknown"),
+                     "informational": 1 if informational else 0},
                 )
+                connection.commit()
+                response_cache.clear()
+                return event
+
+    @_retry_safe_read
+    def get_claim_lifecycle(self, claim_id: str) -> dict | None:
+        claim = self.get_claim(claim_id)
+        return claim.get("_lifecycle") if claim else None
+
+    @_retry_safe_read
+    def get_claim_version(self, claim_id: str, version: int) -> dict | None:
+        with get_pool().acquire() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT payload, version_fingerprint FROM claim_versions WHERE claim_id = :claim_id AND version = :version",
+                    {"claim_id": claim_id, "version": int(version)}, fetch_lobs=False,
+                )
+                row = cursor.fetchone()
+        return {"claim": _load_json(row[0]), "version": int(version), "version_fingerprint": row[1]} if row else None
+
+    @_retry_safe_read
+    def get_latest_validation(self, claim_id: str) -> dict | None:
+        with get_pool().acquire() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """SELECT version, score, status, error_count, warning_count, rules_version, rules_date
+                       FROM validation_runs WHERE claim_id = :claim_id AND informational = 0
+                       ORDER BY created_at DESC, id DESC FETCH FIRST 1 ROW ONLY""",
+                    {"claim_id": claim_id},
+                )
+                row = cursor.fetchone()
+        if not row:
+            return None
+        return {"version": int(row[0]), "score": int(row[1]), "status": row[2],
+                "error_count": int(row[3]), "warning_count": int(row[4]),
+                "rules_version": row[5], "rules_date": row[6]}
+
+    def record_readonly_validation(self, claim_id: str, version: int, claim: dict, result: dict) -> dict | None:
+        return self.record_validation(claim_id, claim, result, informational=True)
+
+    def mark_claim_stale(self, claim_id: str, reason: str) -> None:
+        with get_pool().acquire() as connection:
+            with connection.cursor() as cursor:
+                selected = self._select_claim(cursor, claim_id, for_update=True)
+                if not selected:
+                    raise ValueError("Claim was not found")
+                _claim_ref, claim, version, status = selected
+                if str(status or "").lower() == "submitted":
+                    connection.rollback()
+                    raise ValueError("Submitted claims are locked")
+                cursor.execute(
+                    "UPDATE claims SET status = 'needs_revalidation', updated_at = SYSTIMESTAMP WHERE id = :claim_id",
+                    {"claim_id": claim_id},
+                )
+                connection.commit()
+                response_cache.clear()
+
+    def create_correction_version(self, claim_id: str, reason: str | None = None) -> dict:
+        with get_pool().acquire() as connection:
+            with connection.cursor() as cursor:
+                selected = self._select_claim(cursor, claim_id, for_update=True)
+                if not selected:
+                    raise ValueError("Claim was not found")
+                claim_ref, claim, current_version, status = selected
+                if str(status or "").lower() != "submitted":
+                    connection.rollback()
+                    raise ValueError("A correction version can only be opened for a submitted claim")
+                cursor.execute(
+                    "SELECT version_fingerprint FROM claim_versions WHERE claim_id = :claim_id AND version = :version",
+                    {"claim_id": claim_id, "version": current_version},
+                )
+                prior = cursor.fetchone()
+                if not prior:
+                    raise RuntimeError("Submitted claim version fingerprint is missing")
+                version = current_version + 1
+                timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                event = self._append_cursor(connection, cursor, {
+                    "type": "claim_correction_started", "claim_id": claim_id,
+                    "from_version": current_version, "version": version,
+                    "previous_version_fingerprint": prior[0],
+                    "version_fingerprint": prior[0],
+                    "correction_authorization": "explicit_reason" if reason else "returned_or_rejected_outcome",
+                    "timestamp": timestamp,
+                })
+                cursor.execute(
+                    """INSERT INTO claim_versions
+                       (claim_id, version, payload, created_by, version_fingerprint, event_seq, changed_fields_json)
+                       VALUES (:claim_id, :version, :payload, 'correction_draft', :fingerprint, :event_seq, :changed)""",
+                    {"claim_id": claim_id, "version": version, "payload": _canonical(claim),
+                     "fingerprint": prior[0], "event_seq": event["seq"],
+                     "changed": _canonical({"correction_of": current_version})},
+                )
+                cursor.execute(
+                    """UPDATE claims SET current_version = :version, status = 'needs_revalidation',
+                       updated_at = SYSTIMESTAMP WHERE id = :claim_id""",
+                    {"version": version, "claim_id": claim_id},
+                )
+                connection.commit()
+                response_cache.clear()
+                return {"version": version, "version_fingerprint": prior[0],
+                        "claim": claim, "event": event, "status": "needs_revalidation"}
+
+    def record_submission(self, claim_id: str, claim: dict, outcome: str, detail: str | None = None) -> dict | None:
+        successful = outcome in {"mocked", "accepted_by_openimis", "accepted", "paid"}
+        with get_pool().acquire() as connection:
+            with connection.cursor() as cursor:
+                selected = self._select_claim(cursor, claim_id, for_update=True)
+                if not selected:
+                    raise ValueError("Claim was not found")
+                _claim_ref, stored_claim, version, status = selected
+                fingerprint = _claim_fingerprint(claim)
+                if str(status or "").lower() == "submitted":
+                    connection.rollback()
+                    raise ValueError("Claim is already submitted and locked")
+                if fingerprint != _claim_fingerprint(stored_claim):
+                    connection.rollback()
+                    raise ValueError("Submission payload does not match the saved claim")
+                if successful:
+                    cursor.execute(
+                        """SELECT version, score, error_count FROM validation_runs
+                           WHERE claim_id = :claim_id AND informational = 0
+                           ORDER BY created_at DESC, id DESC FETCH FIRST 1 ROW ONLY""",
+                        {"claim_id": claim_id},
+                    )
+                    latest = cursor.fetchone()
+                    if not latest or int(latest[0]) != version or int(latest[2]) != 0:
+                        connection.rollback()
+                        raise ValueError("The current claim version has not passed validation")
+                payload = {
+                    "type": "submission", "claim_id": claim_id, "version": version,
+                    "version_fingerprint": fingerprint, "outcome": outcome,
+                    "detail": detail, "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                }
+                event = self._append_cursor(connection, cursor, payload)
+                if successful:
+                    cursor.execute(
+                        "UPDATE claims SET status = 'submitted', updated_at = SYSTIMESTAMP WHERE id = :claim_id",
+                        {"claim_id": claim_id},
+                    )
                 connection.commit()
                 response_cache.clear()
                 return event
@@ -891,6 +1318,16 @@ class OracleRepository:
         state = "signed_off" if signed else "in_progress"
         with get_pool().acquire() as connection:
             with connection.cursor() as cursor:
+                current = self._select_claim(cursor, claim_id, for_update=True)
+                if not current:
+                    raise ValueError("Claim was not found")
+                if str(current[3] or "").lower() == "submitted":
+                    connection.rollback()
+                    raise ValueError("Submitted claims are locked")
+                cursor.execute(
+                    "UPDATE claims SET status = 'needs_revalidation', updated_at = SYSTIMESTAMP WHERE id = :claim_id",
+                    {"claim_id": claim_id},
+                )
                 cursor.execute(
                     """UPDATE department_signoffs SET status = :status, note = :note,
                        signed_by = :signed_by, signed_at = :signed_at, review_json = :review_json,
