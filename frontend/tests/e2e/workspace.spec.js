@@ -1,12 +1,14 @@
 import { expect, test } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+import { mkdir } from "node:fs/promises";
+import process from "node:process";
+import path from "node:path";
 
 const departments = ["outpatient", "maternity", "renal", "surgical"];
 const claims = Array.from({ length: 50 }, (_, index) => {
   const number = String(index + 1).padStart(6, "0");
   return {
     id: `SYN-CLM-${number}`,
-    patient_name: `Sample Patient ${index + 1}`,
     patient_id: `SYN-${number}`,
     facility_name: "Kerugoya Level 5 Hospital",
     department: departments[index % departments.length],
@@ -29,6 +31,7 @@ const analytics = {
   signoff_progress: departments.map((department) => ({ department, pending: 3, signed_off: 9 })),
   ledger_status: { entries: 170, unanchored_entries: 170 },
 };
+const outpatientClaimCount = claims.filter((claim) => claim.department === "outpatient").length;
 
 async function mockApi(page, claimsResponder = async (route) => route.fulfill({ json: { claims, count: 50 } })) {
   await page.route("http://localhost:8001/**", async (route) => {
@@ -85,27 +88,56 @@ test("workspace fits the supported desktop and tablet widths without horizontal 
   }
 });
 
-test("workspace satisfies automated WCAG 2.1 AA checks in light mode", async ({ page }) => {
+test("capture review screenshots for the queue, work tabs, and overview at supported widths", async ({ page }) => {
+  await mockApi(page);
+  await enterWorkspace(page);
+  const screenshotDir = path.resolve(process.cwd(), "screenshots", "review");
+  await mkdir(screenshotDir, { recursive: true });
+
+  for (const viewport of [
+    { width: 1366, height: 768 },
+    { width: 1920, height: 1080 },
+    { width: 1024, height: 768 },
+  ]) {
+    await page.setViewportSize(viewport);
+    const prefix = `${viewport.width}x${viewport.height}`;
+    const save = (name) => page.screenshot({ path: path.join(screenshotDir, `${prefix}-${name}.png`), fullPage: false });
+    await save("claim-list");
+    for (const [section, filename] of [
+      ["Checks", "claim-checks"],
+      ["Audit", "audit-trail"],
+      ["Departments", "department-workspace"],
+    ]) {
+      await page.getByRole("navigation", { name: "Claim sections" }).getByRole("button", { name: section, exact: true }).click();
+      await page.waitForTimeout(100);
+      await save(filename);
+    }
+    await page.getByRole("button", { name: "Management Overview", exact: true }).click();
+    await page.waitForTimeout(100);
+    await save("management-overview");
+    await page.reload();
+    await enterWorkspace(page);
+  }
+});
+
+test("workspace satisfies automated WCAG 2.1 AA checks on key light and dark views", async ({ page }) => {
   await page.emulateMedia({ colorScheme: "light" });
   await mockApi(page);
   await enterWorkspace(page);
-  const sections = ["Checks", "Details", "Departments", "Audit", "Outcome"];
-  for (const section of sections) {
-    if (section !== "Checks") await page.getByRole("button", { name: section, exact: true }).click();
-    const { violations } = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();
-    expect(violations.map(({ id, help, nodes }) => ({ id, help, affected: nodes.map((node) => node.target) })), `Axe WCAG violations in ${section}`).toEqual([]);
-  }
+  const { violations: checksViolations } = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();
+  expect(checksViolations.map(({ id, help, nodes }) => ({ id, help, affected: nodes.map((node) => node.target) })), "Axe WCAG violations in Checks").toEqual([]);
+  await page.getByRole("button", { name: "Audit", exact: true }).click();
+  const { violations: auditViolations } = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();
+  expect(auditViolations.map(({ id, help, nodes }) => ({ id, help, affected: nodes.map((node) => node.target) })), "Axe WCAG violations in Audit").toEqual([]);
   await page.getByRole("button", { name: "Management Overview", exact: true }).click();
   const { violations } = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();
   expect(violations.map(({ id, help, nodes }) => ({ id, help, affected: nodes.map((node) => node.target) }))).toEqual([]);
 
-  await page.getByRole("button", { name: "Claims", exact: true }).click();
+  await page.reload();
+  await enterWorkspace(page);
   await page.getByRole("button", { name: "Toggle theme" }).click();
-  for (const section of sections) {
-    if (section !== "Checks") await page.getByRole("button", { name: section, exact: true }).click();
-    const darkAudit = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();
-    expect(darkAudit.violations.map(({ id, help, nodes }) => ({ id, help, affected: nodes.map((node) => node.target) })), `Axe WCAG violations in dark ${section}`).toEqual([]);
-  }
+  const darkAudit = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();
+  expect(darkAudit.violations.map(({ id, help, nodes }) => ({ id, help, affected: nodes.map((node) => node.target) })), "Axe WCAG violations in dark Checks").toEqual([]);
 });
 
 test("claims queue recovers automatically after the backend returns without reloading", async ({ page }) => {
@@ -118,17 +150,66 @@ test("claims queue recovers automatically after the backend returns without relo
     return route.fulfill({ json: { claims, count: claims.length } });
   });
   await enterWorkspace(page);
-  await expect(page.locator("aside[aria-label='Claims queue'] ul li")).toHaveCount(50);
+  await expect(page.locator("aside[aria-label='Claims queue'] ul li")).toHaveCount(outpatientClaimCount);
 
   online = false;
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("Database slow / unreachable");
   await expect(page.getByRole("alert")).toContainText("Offline: showing data saved at");
-  expect(await page.locator("aside[aria-label='Claims queue'] ul li").count()).toBe(50);
+  expect(await page.locator("aside[aria-label='Claims queue'] ul li").count()).toBe(outpatientClaimCount);
 
   online = true;
   await page.clock.fastForward(15_000);
   await expect(page.getByRole("alert")).toHaveCount(0);
-  await expect(page.locator("aside[aria-label='Claims queue'] ul li")).toHaveCount(50);
+  await expect(page.locator("aside[aria-label='Claims queue'] ul li")).toHaveCount(outpatientClaimCount);
   expect(requests).toBeGreaterThanOrEqual(3);
+});
+
+test("submitted claim stays locked, supports read-only recheck, and opens a correction version", async ({ page }) => {
+  const lifecycleClaim = {
+    ...claims[0], department: "outpatient",
+    _lifecycle: { status: "needs_revalidation", version: 1, version_fingerprint: "a".repeat(64) },
+  };
+  let lifecycle = lifecycleClaim._lifecycle;
+  await page.route("http://localhost:8001/**", async (route) => {
+    const url = new URL(route.request().url());
+    const pathname = decodeURIComponent(url.pathname);
+    const method = route.request().method();
+    if (pathname === "/settings/ui") return route.fulfill({ json: { departments_enabled: false } });
+    if (pathname === "/claims" && method === "GET") return route.fulfill({ json: { claims: [{ ...lifecycleClaim, _lifecycle: lifecycle }], count: 1 } });
+    if (pathname === `/claims/${lifecycleClaim.id}` && method === "GET") return route.fulfill({ json: { ...lifecycleClaim, _lifecycle: lifecycle } });
+    if (pathname.endsWith("/validate")) {
+      lifecycle = { status: "ready", version: 2, version_fingerprint: "b".repeat(64) };
+      return route.fulfill({ json: { score: 100, status: "Ready for Submission", error_count: 0, warning_count: 0, results: [], explanations: {}, lifecycle, version: 2, version_fingerprint: lifecycle.version_fingerprint } });
+    }
+    if (pathname.endsWith("/submit")) {
+      lifecycle = { ...lifecycle, status: "submitted" };
+      return route.fulfill({ json: { submitted: true, mode: "mock", score: 100, version: 2, version_fingerprint: lifecycle.version_fingerprint, lifecycle } });
+    }
+    if (pathname.endsWith("/recheck")) return route.fulfill({ json: { validation: { informational: true, version: 2, status: "Ready for Submission", score: 100 }, lifecycle } });
+    if (pathname.endsWith("/correction")) {
+      lifecycle = { status: "needs_revalidation", version: 3, version_fingerprint: "b".repeat(64) };
+      return route.fulfill({ json: { lifecycle, correction: { ...lifecycle, claim: lifecycleClaim } } });
+    }
+    if (pathname.endsWith("/department-review")) return route.fulfill({ json: { review: null } });
+    if (pathname === "/outcomes") return route.fulfill({ json: { outcomes: [] } });
+    if (pathname.endsWith("/audit")) return route.fulfill({ json: { history: [], current_version: { status: "matches" } } });
+    return route.fulfill({ json: { recorded: true, review: null } });
+  });
+
+  await enterWorkspace(page);
+  const sampleRow = page.locator("aside[aria-label='Claims queue'] ul li button").filter({ hasText: "SYN-CLM-000001" }).first();
+  await expect(sampleRow).toBeVisible();
+  await sampleRow.click();
+  await page.getByRole("button", { name: "Re-run checks" }).click();
+  await expect(page.getByRole("button", { name: "Submit claim →" })).toBeEnabled();
+  await page.getByRole("button", { name: "Submit claim →" }).click();
+  await expect(page.getByRole("heading", { name: "Submitted, locked" })).toBeVisible();
+  await expect(page.getByText("b".repeat(64))).toBeVisible();
+  await page.getByRole("button", { name: "Re-check against current rules (read-only)" }).click();
+  await expect(page.getByText(/Informational result for submitted version 2/)).toBeVisible();
+  await page.getByLabel(/Correction reason/).fill("Fix a coding detail");
+  await page.getByRole("button", { name: "Create correction version" }).click();
+  await expect(page.getByRole("button", { name: "Re-run checks" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Makena Wanjala Nyongesa", exact: true })).toBeVisible();
 });

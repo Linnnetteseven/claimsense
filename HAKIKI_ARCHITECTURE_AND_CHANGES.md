@@ -1,5 +1,7 @@
 # Hakiki Architecture and Change Record
 
+> **Historical snapshot, not current branch documentation.** This report was inspected on 2026-11-01, before Oracle-backed repositories, demo desk roles, synthetic display-name generation, and the submitted-claim lifecycle updates were added. Several architecture and data-storage statements below are now outdated. Use [README.md](README.md) for the current branch workflow until this evidence report is regenerated against current code.
+
 **Evidence snapshot:** repository tree and Git history inspected on 2026-11-01. Paths and line numbers below refer to this repository as it was inspected. “UNKNOWN” means the repository does not establish the fact. Features are classified using exactly `IMPLEMENTED`, `PARTIAL`, `MOCKED`, or `PLANNED`.
 
 ## 1. Project summary

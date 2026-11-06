@@ -100,9 +100,9 @@ export default function ValidationPanel({ claim, onValidationComplete, onLifecyc
 
   const [activeTab, setActiveTab] = useState("Checks");
   const overallStatus = useMemo(() => getOverallStatus(
-    { ...(validation || claim?._preview || {}), department: claim?.department },
+    { ...(validation || claim?._preview || {}), department: departmentsEnabled ? claim?.department : null },
     departmentReview,
-  ), [claim, validation, departmentReview]);
+  ), [claim, validation, departmentReview, departmentsEnabled]);
   const displayedStatus = (hasEdits || isStale) && !isSubmitted
     ? { status: "amber", label: "Needs revalidation", reason: "Unsaved edits must be validated before submission." }
     : isSubmitted
